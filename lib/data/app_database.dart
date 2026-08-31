@@ -8,7 +8,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'tally.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   Database? _db;
 
@@ -30,6 +30,7 @@ class AppDatabase {
   Future<void> _onCreate(Database db, int version) async {
     await _createActions(db);
     await _createItems(db);
+    await _createBilling(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -46,6 +47,7 @@ class AppDatabase {
     if (oldVersion < 3) {
       await db.execute('ALTER TABLE actions ADD COLUMN media_assets TEXT');
     }
+    if (oldVersion < 4) await _createBilling(db);
   }
 
   Future<void> _createActions(Database db) async {
@@ -84,6 +86,24 @@ class AppDatabase {
         'name': name,
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
+  }
+
+  Future<void> _createBilling(Database db) async {
+    await db.execute(
+      '''CREATE TABLE IF NOT EXISTS pos_catalog_nodes (id TEXT PRIMARY KEY,nickname TEXT NOT NULL,item_count INTEGER NOT NULL DEFAULT 0,catalog_updated_at INTEGER)''',
+    );
+    await db.execute(
+      '''CREATE TABLE IF NOT EXISTS pos_catalog_items (node_id TEXT NOT NULL,source_product_key TEXT NOT NULL,name TEXT NOT NULL,sku TEXT,barcode TEXT,category TEXT,unit TEXT,unit_price REAL NOT NULL,attributes TEXT NOT NULL,PRIMARY KEY(node_id,source_product_key))''',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_pos_catalog_items_name ON pos_catalog_items(node_id,name COLLATE NOCASE)',
+    );
+    await db.execute(
+      '''CREATE TABLE IF NOT EXISTS mobile_bills (client_bill_id TEXT PRIMARY KEY,catalog_node_id TEXT NOT NULL,payload TEXT NOT NULL,created_at INTEGER NOT NULL,synced INTEGER NOT NULL DEFAULT 0,server_id TEXT,last_error TEXT)''',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_mobile_bills_pending ON mobile_bills(synced,created_at)',
+    );
   }
 
   static const _defaultItems = [

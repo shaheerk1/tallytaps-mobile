@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/action_repository.dart';
+import '../data/billing_repository.dart';
+import '../models/mobile_bill.dart';
 import '../models/media_attachment.dart';
 import '../models/tally_action.dart';
 import '../services/sync_config_service.dart';
@@ -13,11 +15,16 @@ import '../services/sync_service.dart';
 /// App-wide state. Holds every recorded action in memory after each change
 /// so the UI always reflects what is on disk.
 class TallyStore extends ChangeNotifier {
-  TallyStore(this._repo, {SyncService? syncService})
-    : _syncService = syncService ?? SyncService();
+  TallyStore(
+    this._repo, {
+    SyncService? syncService,
+    BillingRepository? billingRepository,
+  }) : _syncService = syncService ?? SyncService(),
+       _billingRepository = billingRepository ?? BillingRepository();
 
   final ActionRepository _repo;
   final SyncService _syncService;
+  final BillingRepository _billingRepository;
 
   List<TallyAction> _actions = [];
   bool _loading = true;
@@ -26,6 +33,7 @@ class TallyStore extends ChangeNotifier {
   SyncConnection? _connection;
   bool _syncing = false;
   String? _lastSyncError;
+  int _pendingBillCount = 0;
 
   List<TallyAction> get actions => _actions;
   bool get loading => _loading;
@@ -33,6 +41,7 @@ class TallyStore extends ChangeNotifier {
   bool get syncing => _syncing;
   String? get lastSyncError => _lastSyncError;
   bool get isConnected => _connection?.isConnected ?? false;
+  int get pendingBillCount => _pendingBillCount;
 
   /// The most recently recorded action, shown as a success banner on home.
   TallyAction? get lastRecorded => _lastRecorded;
@@ -62,11 +71,13 @@ class TallyStore extends ChangeNotifier {
   Future<void> refresh() async {
     _actions = await _repo.getAll();
     _connection = await _syncService.loadConnection();
+    _pendingBillCount = await _billingRepository.pendingCount();
     _loading = false;
     notifyListeners();
     if (isConnected && unsynced.isNotEmpty) {
       unawaited(syncPending());
     }
+    if (isConnected && _pendingBillCount > 0) unawaited(syncPendingBills());
   }
 
   Future<TallyAction> record({
@@ -167,12 +178,15 @@ class TallyStore extends ChangeNotifier {
 
   Future<void> checkPairing() async {
     final connection = _connection;
-    if (connection == null || connection.status != ConnectionStatus.pending) return;
+    if (connection == null || connection.status != ConnectionStatus.pending) {
+      return;
+    }
     try {
       _connection = await _syncService.checkPairing(connection);
       _lastSyncError = null;
       notifyListeners();
       if (isConnected && unsynced.isNotEmpty) unawaited(syncPending());
+      if (isConnected && _pendingBillCount > 0) unawaited(syncPendingBills());
     } on SyncFailure catch (error) {
       _connection = await _syncService.loadConnection();
       _lastSyncError = error.message;
@@ -224,7 +238,10 @@ class TallyStore extends ChangeNotifier {
     final connection = _connection;
     if (connection == null) return false;
     if (action.mediaAssets.isEmpty && action.hasMedia) {
-      action.mediaAssets = _buildMediaAssets(action.voicePath, action.imagePaths);
+      action.mediaAssets = _buildMediaAssets(
+        action.voicePath,
+        action.imagePaths,
+      );
       await _repo.updateMediaAssets(action);
     }
     try {
@@ -239,14 +256,92 @@ class TallyStore extends ChangeNotifier {
       _lastSyncError = error.message;
       return false;
     } on TimeoutException {
-      _lastSyncError = 'The server took too long to respond. Your entry is safe on this device.';
+      _lastSyncError =
+          'The server took too long to respond. Your entry is safe on this device.';
       return false;
     } on SocketException {
-      _lastSyncError = 'No connection to the sync server. Your entry is safe on this device.';
+      _lastSyncError =
+          'No connection to the sync server. Your entry is safe on this device.';
       return false;
     } catch (_) {
-      _lastSyncError = 'Could not sync right now. Your entry is safe on this device.';
+      _lastSyncError =
+          'Could not sync right now. Your entry is safe on this device.';
       return false;
     }
+  }
+
+  Future<List<PosCatalogNode>> loadPosNodes({bool refresh = true}) async {
+    var nodes = await _billingRepository.nodes();
+    final connection = _connection;
+    if (refresh && connection?.isConnected == true) {
+      nodes = await _syncService.listPosNodes(connection!);
+      await _billingRepository.replaceNodes(nodes);
+    }
+    return nodes;
+  }
+
+  Future<List<CatalogItem>> loadCatalog(
+    String nodeId, {
+    bool refresh = true,
+  }) async {
+    var items = await _billingRepository.catalog(nodeId);
+    final connection = _connection;
+    if (refresh && connection?.isConnected == true) {
+      items = await _syncService.loadCatalog(connection!, nodeId);
+      await _billingRepository.replaceCatalog(nodeId, items);
+    }
+    return items;
+  }
+
+  Future<bool> submitMobileBill(MobileBill bill) async {
+    await _billingRepository.saveBill(bill);
+    _pendingBillCount = await _billingRepository.pendingCount();
+    notifyListeners();
+    final connection = _connection;
+    if (connection?.isConnected != true) return false;
+    try {
+      final id = await _syncService.submitMobileBillPayload(
+        connection!,
+        Map<String, dynamic>.from(bill.toApi()),
+      );
+      await _billingRepository.markBillSynced(bill.clientBillId, id);
+      bill.synced = true;
+      bill.serverId = id;
+      _pendingBillCount = await _billingRepository.pendingCount();
+      notifyListeners();
+      return true;
+    } catch (error) {
+      await _billingRepository.markBillError(
+        bill.clientBillId,
+        error.toString(),
+      );
+      _lastSyncError = error.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<int> syncPendingBills() async {
+    final connection = _connection;
+    if (connection?.isConnected != true) return 0;
+    var synced = 0;
+    for (final payload in await _billingRepository.pendingBills()) {
+      final clientId = '${payload['clientBillId']}';
+      try {
+        final id = await _syncService.submitMobileBillPayload(
+          connection!,
+          payload,
+        );
+        await _billingRepository.markBillSynced(clientId, id);
+        synced++;
+      } catch (error) {
+        await _billingRepository.markBillError(clientId, error.toString());
+        _lastSyncError = error.toString();
+        break;
+      }
+    }
+    _pendingBillCount = await _billingRepository.pendingCount();
+    notifyListeners();
+    return synced;
   }
 }

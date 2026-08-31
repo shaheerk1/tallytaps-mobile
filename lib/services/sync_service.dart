@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/media_attachment.dart';
 import '../models/tally_action.dart';
+import '../models/mobile_bill.dart';
 import 'device_identity_service.dart';
 import 'sync_config_service.dart';
 import 'sync_diagnostics_service.dart';
@@ -54,12 +55,16 @@ class SyncService {
         .timeout(const Duration(seconds: 15));
     final body = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw SyncFailure(_message(body, fallback: 'Could not request connection.'));
+      throw SyncFailure(
+        _message(body, fallback: 'Could not request connection.'),
+      );
     }
     final requestId = body['requestId'] as String?;
     final requestSecret = body['requestSecret'] as String?;
     if (requestId == null || requestSecret == null) {
-      throw const SyncFailure('The server returned an incomplete pairing request.');
+      throw const SyncFailure(
+        'The server returned an incomplete pairing request.',
+      );
     }
     final connection = SyncConnection(
       serverUrl: _normaliseServerUrl(serverUrl),
@@ -77,7 +82,9 @@ class SyncService {
     final requestId = connection.requestId;
     final secret = connection.requestSecret;
     if (requestId == null || secret == null) {
-      throw const SyncFailure('This connection request is incomplete. Start it again.');
+      throw const SyncFailure(
+        'This connection request is incomplete. Start it again.',
+      );
     }
     final response = await _client
         .get(
@@ -87,13 +94,17 @@ class SyncService {
         .timeout(const Duration(seconds: 15));
     final body = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw SyncFailure(_message(body, fallback: 'Could not check connection approval.'));
+      throw SyncFailure(
+        _message(body, fallback: 'Could not check connection approval.'),
+      );
     }
     final status = body['status'] as String?;
     if (status == 'approved') {
       final token = body['deviceToken'] as String?;
       if (token == null || token.isEmpty) {
-        throw const SyncFailure('The server approved this device without a device token.');
+        throw const SyncFailure(
+          'The server approved this device without a device token.',
+        );
       }
       final connected = connection.copyWith(
         status: ConnectionStatus.connected,
@@ -110,6 +121,89 @@ class SyncService {
   }
 
   Future<void> forgetConnection() => _config.clear();
+
+  Future<List<PosCatalogNode>> listPosNodes(SyncConnection connection) async {
+    final body = await _deviceGet(connection, '/api/v1/mobile/pos-nodes');
+    final nodes = body['nodes'];
+    if (nodes is! List) {
+      throw const SyncFailure('The server returned an invalid POS list.');
+    }
+    return nodes
+        .whereType<Map>()
+        .map((node) => PosCatalogNode.fromMap(Map<String, dynamic>.from(node)))
+        .toList();
+  }
+
+  Future<List<CatalogItem>> loadCatalog(
+    SyncConnection connection,
+    String nodeId,
+  ) async {
+    final body = await _deviceGet(
+      connection,
+      '/api/v1/mobile/catalogs/${Uri.encodeComponent(nodeId)}',
+    );
+    final items = body['items'];
+    if (items is! List) {
+      throw const SyncFailure('The server returned an invalid item catalog.');
+    }
+    return items
+        .whereType<Map>()
+        .map(
+          (item) =>
+              CatalogItem.fromApi(nodeId, Map<String, dynamic>.from(item)),
+        )
+        .toList();
+  }
+
+  Future<String> submitMobileBillPayload(
+    SyncConnection connection,
+    Map<String, dynamic> payload,
+  ) async {
+    final token = connection.deviceToken;
+    if (!connection.isConnected || token == null) {
+      throw const SyncFailure('Connect this device before sending a bill.');
+    }
+    final response = await _client
+        .post(
+          _apiUri(connection.serverUrl, '/api/v1/mobile/bills'),
+          headers: {
+            'Content-Type': 'application/json',
+            HttpHeaders.authorizationHeader: 'Bearer $token',
+          },
+          body: jsonEncode(payload),
+        )
+        .timeout(const Duration(seconds: 30));
+    final body = _decode(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw SyncFailure(_message(body, fallback: 'Could not send this bill.'));
+    }
+    final id = body['id'] as String?;
+    if (id == null || id.isEmpty) {
+      throw const SyncFailure('The server did not return a bill ID.');
+    }
+    return id;
+  }
+
+  Future<Map<String, dynamic>> _deviceGet(
+    SyncConnection connection,
+    String path,
+  ) async {
+    final token = connection.deviceToken;
+    if (!connection.isConnected || token == null) {
+      throw const SyncFailure('Connect this device before loading POS data.');
+    }
+    final response = await _client
+        .get(
+          _apiUri(connection.serverUrl, path),
+          headers: {HttpHeaders.authorizationHeader: 'Bearer $token'},
+        )
+        .timeout(const Duration(seconds: 20));
+    final body = _decode(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw SyncFailure(_message(body, fallback: 'Could not load POS data.'));
+    }
+    return body;
+  }
 
   /// Sends needed attachments first, then the action. A callback persists an
   /// uploaded server ID immediately, so a later failure only retries what is left.
@@ -165,7 +259,9 @@ class SyncService {
           )
           .timeout(const Duration(seconds: 20));
       final body = _decode(response);
-      await _diagnostics.log('Record sync response: HTTP ${response.statusCode}.');
+      await _diagnostics.log(
+        'Record sync response: HTTP ${response.statusCode}.',
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw SyncFailure(
           _message(body, fallback: 'Could not sync this entry.'),
@@ -190,21 +286,25 @@ class SyncService {
       await _diagnostics.log(
         'Attachment upload skipped: the ${asset.type.name} file is missing.',
       );
-      throw SyncFailure('An attached ${asset.type.name} file is no longer on this device.');
+      throw SyncFailure(
+        'An attached ${asset.type.name} file is no longer on this device.',
+      );
     }
     final bytes = await file.length();
     await _diagnostics.log(
       'Attachment upload started: ${asset.type.name}, $bytes bytes.',
     );
     try {
-      final request = http.MultipartRequest(
-        'POST',
-        _apiUri(serverUrl, '/api/v1/media'),
-      )
-        ..headers[HttpHeaders.authorizationHeader] = 'Bearer $token'
-        ..fields['clientMediaId'] = asset.clientMediaId
-        ..files.add(await http.MultipartFile.fromPath('file', asset.localPath));
-      final response = await request.send().timeout(const Duration(seconds: 45));
+      final request =
+          http.MultipartRequest('POST', _apiUri(serverUrl, '/api/v1/media'))
+            ..headers[HttpHeaders.authorizationHeader] = 'Bearer $token'
+            ..fields['clientMediaId'] = asset.clientMediaId
+            ..files.add(
+              await http.MultipartFile.fromPath('file', asset.localPath),
+            );
+      final response = await request.send().timeout(
+        const Duration(seconds: 45),
+      );
       final decoded = _decodeText(await response.stream.bytesToString());
       await _diagnostics.log(
         'Attachment upload response: HTTP ${response.statusCode}.',
@@ -215,7 +315,8 @@ class SyncService {
         );
       }
       final rawAsset = decoded['asset'];
-      final id = decoded['id'] as String? ??
+      final id =
+          decoded['id'] as String? ??
           (rawAsset is Map ? rawAsset['id'] as String? : null);
       if (id == null || id.isEmpty) {
         throw const SyncFailure('The server did not return an attachment ID.');
@@ -238,16 +339,23 @@ class SyncService {
     if (trimmed.isEmpty) throw const SyncFailure('Enter your server address.');
     final withScheme = trimmed.contains('://') ? trimmed : 'https://$trimmed';
     final uri = Uri.tryParse(withScheme);
-    if (uri == null || uri.host.isEmpty || !(uri.scheme == 'http' || uri.scheme == 'https')) {
-      throw const SyncFailure('Enter a valid server address, such as https://sync.example.com.');
+    if (uri == null ||
+        uri.host.isEmpty ||
+        !(uri.scheme == 'http' || uri.scheme == 'https')) {
+      throw const SyncFailure(
+        'Enter a valid server address, such as https://sync.example.com.',
+      );
     }
     if (kReleaseMode && uri.scheme != 'https') {
-      throw const SyncFailure('For security, the production app can only connect to an HTTPS server.');
+      throw const SyncFailure(
+        'For security, the production app can only connect to an HTTPS server.',
+      );
     }
     return uri.toString().replaceFirst(RegExp(r'/$'), '');
   }
 
-  static Map<String, dynamic> _decode(http.Response response) => _decodeText(response.body);
+  static Map<String, dynamic> _decode(http.Response response) =>
+      _decodeText(response.body);
 
   static Map<String, dynamic> _decodeText(String raw) {
     try {
@@ -258,6 +366,8 @@ class SyncService {
     }
   }
 
-  static String _message(Map<String, dynamic> body, {required String fallback}) =>
-      body['message'] as String? ?? body['error'] as String? ?? fallback;
+  static String _message(
+    Map<String, dynamic> body, {
+    required String fallback,
+  }) => body['message'] as String? ?? body['error'] as String? ?? fallback;
 }

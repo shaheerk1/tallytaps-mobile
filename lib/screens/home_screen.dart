@@ -12,6 +12,7 @@ import '../theme/app_theme.dart';
 import '../widgets/category_button.dart';
 import 'entry_screen.dart';
 import 'history_screen.dart';
+import 'mobile_billing_screen.dart';
 
 /// Landing screen. The whole first view is dedicated to starting a new action:
 /// a friendly prompt on top and the four big category buttons docked at the
@@ -28,7 +29,9 @@ class HomeScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _Header(unsyncedCount: store.unsynced.length),
+            _Header(
+              unsyncedCount: store.unsynced.length + store.pendingBillCount,
+            ),
             _TodaySummary(
               incoming: store.todayIncoming(),
               outgoing: store.todayOutgoing(),
@@ -44,6 +47,9 @@ class HomeScreen extends StatelessWidget {
                   : const _HeroPrompt(),
             ),
             _Dock(
+              onBill: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const MobileBillingScreen()),
+              ),
               onCategory: (type) => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => EntryScreen(type: type)),
               ),
@@ -516,10 +522,7 @@ class _SuccessBannerState extends State<_SuccessBanner>
         final item = (a.item == null || a.item!.trim().isEmpty)
             ? null
             : a.item!.trim();
-        final parts = [
-          ?item,
-          if (a.qtyLabel.isNotEmpty) a.qtyLabel,
-        ];
+        final parts = [?item, if (a.qtyLabel.isNotEmpty) a.qtyLabel];
         return '$dir${parts.isEmpty ? '' : ' · ${parts.join(' · ')}'}!';
       default:
         final dir = a.direction == ActionDirection.incoming
@@ -534,9 +537,10 @@ class _SuccessBannerState extends State<_SuccessBanner>
 // The bottom dock of big category buttons
 // ---------------------------------------------------------------------------
 class _Dock extends StatelessWidget {
-  const _Dock({required this.onCategory});
+  const _Dock({required this.onCategory, required this.onBill});
 
   final ValueChanged<ActionType> onCategory;
+  final VoidCallback onBill;
 
   @override
   Widget build(BuildContext context) {
@@ -558,6 +562,25 @@ class _Dock extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
+              child: FilledButton.icon(
+                onPressed: onBill,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.ink,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  minimumSize: const Size.fromHeight(54),
+                ),
+                icon: const Icon(Icons.receipt_long_rounded),
+                label: const Text(
+                  'Create a quick bill',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(left: 10, bottom: 6),
               child: Row(
