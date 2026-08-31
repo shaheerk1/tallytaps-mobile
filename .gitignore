@@ -1,0 +1,32 @@
+# Flutter and Dart tooling
+.dart_tool/
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+
+# IDE metadata
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# Platform-generated files
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+ios/Flutter/.last_build_id
+ios/Pods/
+windows/flutter/ephemeral/
+
+# Local and generated artifacts
+*.log
+*.zip
+*.jks
+*.keystore
+android/key.properties
