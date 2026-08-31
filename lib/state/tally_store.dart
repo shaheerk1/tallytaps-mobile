@@ -202,6 +202,18 @@ class TallyStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> updateRecordRouting({required String deliveryScope, String? targetPosNodeId}) async {
+    final connection = _connection;
+    if (connection == null) return;
+    final selected = deliveryScope == 'selected' && targetPosNodeId != null;
+    _connection = connection.copyWith(
+      deliveryScope: selected ? 'selected' : 'all',
+      targetPosNodeIds: selected ? [targetPosNodeId] : const [],
+    );
+    await _syncService.saveConnection(_connection!);
+    notifyListeners();
+  }
+
   Future<int> syncPending() async {
     if (_syncing || !isConnected) return 0;
     _syncing = true;

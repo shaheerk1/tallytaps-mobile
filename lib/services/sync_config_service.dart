@@ -13,6 +13,8 @@ class SyncConnection {
     this.deviceToken,
     this.requestId,
     this.requestSecret,
+    this.deliveryScope = 'all',
+    this.targetPosNodeIds = const [],
   });
 
   final String serverUrl;
@@ -22,6 +24,8 @@ class SyncConnection {
   final String? deviceToken;
   final String? requestId;
   final String? requestSecret;
+  final String deliveryScope;
+  final List<String> targetPosNodeIds;
 
   bool get isConnected => status == ConnectionStatus.connected && deviceToken != null;
 
@@ -30,6 +34,8 @@ class SyncConnection {
     String? deviceToken,
     String? requestId,
     String? requestSecret,
+    String? deliveryScope,
+    List<String>? targetPosNodeIds,
   }) => SyncConnection(
     serverUrl: serverUrl,
     hostCode: hostCode,
@@ -38,6 +44,8 @@ class SyncConnection {
     deviceToken: deviceToken ?? this.deviceToken,
     requestId: requestId ?? this.requestId,
     requestSecret: requestSecret ?? this.requestSecret,
+    deliveryScope: deliveryScope ?? this.deliveryScope,
+    targetPosNodeIds: targetPosNodeIds ?? this.targetPosNodeIds,
   );
 
   Map<String, Object?> toMap() => {
@@ -48,6 +56,8 @@ class SyncConnection {
     'deviceToken': deviceToken,
     'requestId': requestId,
     'requestSecret': requestSecret,
+    'deliveryScope': deliveryScope,
+    'targetPosNodeIds': targetPosNodeIds,
   };
 
   factory SyncConnection.fromMap(Map<String, Object?> map) => SyncConnection(
@@ -61,6 +71,11 @@ class SyncConnection {
     deviceToken: map['deviceToken'] as String?,
     requestId: map['requestId'] as String?,
     requestSecret: map['requestSecret'] as String?,
+    deliveryScope: map['deliveryScope'] == 'selected' ? 'selected' : 'all',
+    targetPosNodeIds: (map['targetPosNodeIds'] as List?)
+            ?.whereType<String>()
+            .toList(growable: false) ??
+        const [],
   );
 }
 

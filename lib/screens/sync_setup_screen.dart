@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/sync_config_service.dart';
+import '../models/mobile_bill.dart';
 import '../services/sync_diagnostics_service.dart';
 import '../services/sync_service.dart';
 import '../state/tally_store.dart';
@@ -358,11 +359,53 @@ class _PendingCard extends StatelessWidget {
   );
 }
 
-class _ConnectedCard extends StatelessWidget {
+class _ConnectedCard extends StatefulWidget {
   const _ConnectedCard({required this.connection, required this.store, required this.onForget});
   final SyncConnection connection;
   final TallyStore store;
   final Future<void> Function() onForget;
+
+  @override
+  State<_ConnectedCard> createState() => _ConnectedCardState();
+}
+
+class _ConnectedCardState extends State<_ConnectedCard> {
+  List<PosCatalogNode> _nodes = const [];
+  bool _loadingNodes = true;
+  bool _saving = false;
+  String? _routingError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNodes();
+  }
+
+  Future<void> _loadNodes() async {
+    try {
+      final nodes = await widget.store.loadPosNodes();
+      if (mounted) setState(() => _nodes = nodes);
+    } catch (_) {
+      if (mounted) setState(() => _routingError = 'Could not refresh POS destinations.');
+    } finally {
+      if (mounted) setState(() => _loadingNodes = false);
+    }
+  }
+
+  Future<void> _setDestination(String? value) async {
+    if (value == null || _saving) return;
+    setState(() { _saving = true; _routingError = null; });
+    try {
+      await widget.store.updateRecordRouting(
+        deliveryScope: value == '__all__' ? 'all' : 'selected',
+        targetPosNodeId: value == '__all__' ? null : value,
+      );
+    } catch (_) {
+      if (mounted) setState(() => _routingError = 'Could not save the destination.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => _Card(
@@ -371,19 +414,42 @@ class _ConnectedCard extends StatelessWidget {
       children: [
         const Row(children: [Icon(Icons.verified_rounded, color: AppColors.positive, size: 30), SizedBox(width: 10), Text('Connected', style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800))]),
         const SizedBox(height: 14),
-        _DetailRow(label: 'HOST ID', value: connection.hostCode),
+        _DetailRow(label: 'HOST ID', value: widget.connection.hostCode),
         const SizedBox(height: 9),
-        _DetailRow(label: 'SERVER', value: connection.serverUrl),
-        if (store.unsynced.isNotEmpty) ...[
+        _DetailRow(label: 'SERVER', value: widget.connection.serverUrl),
+        const SizedBox(height: 20),
+        const Text('QUICK RECORD DESTINATION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.inkFaint, letterSpacing: 0.5)),
+        const SizedBox(height: 7),
+        if (_loadingNodes)
+          const LinearProgressIndicator(minHeight: 3)
+        else
+          DropdownButtonFormField<String>(
+            key: ValueKey('${widget.connection.deliveryScope}-${widget.connection.targetPosNodeIds.join(',')}'),
+            initialValue: widget.connection.deliveryScope == 'selected' &&
+                    widget.connection.targetPosNodeIds.isNotEmpty &&
+                    _nodes.any((node) => node.id == widget.connection.targetPosNodeIds.first)
+                ? widget.connection.targetPosNodeIds.first
+                : '__all__',
+            decoration: const InputDecoration(prefixIcon: Icon(Icons.route_rounded)),
+            items: [
+              const DropdownMenuItem(value: '__all__', child: Text('All connected POS systems')),
+              ..._nodes.map((node) => DropdownMenuItem(value: node.id, child: Text(node.nickname))),
+            ],
+            onChanged: _saving ? null : _setDestination,
+          ),
+        const SizedBox(height: 7),
+        const Text('Used automatically for cash, card, stock, and note records. Bills choose their destination during checkout.', style: TextStyle(color: AppColors.inkSoft, fontSize: 12, height: 1.35)),
+        if (_routingError != null) ...[const SizedBox(height: 8), _ErrorText(_routingError!)],
+        if (widget.store.unsynced.isNotEmpty) ...[
           const SizedBox(height: 20),
           FilledButton.icon(
-            onPressed: store.syncing ? null : () => store.syncPending(),
-            icon: store.syncing ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.sync_rounded),
-            label: Text('Sync ${store.unsynced.length} waiting ${store.unsynced.length == 1 ? 'entry' : 'entries'}'),
+            onPressed: widget.store.syncing ? null : () => widget.store.syncPending(),
+            icon: widget.store.syncing ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.sync_rounded),
+            label: Text('Sync ${widget.store.unsynced.length} waiting ${widget.store.unsynced.length == 1 ? 'entry' : 'entries'}'),
           ),
         ],
         const SizedBox(height: 12),
-        TextButton.icon(onPressed: onForget, icon: const Icon(Icons.link_off_rounded), label: const Text('Disconnect this device')),
+        TextButton.icon(onPressed: widget.onForget, icon: const Icon(Icons.link_off_rounded), label: const Text('Disconnect this device')),
       ],
     ),
   );

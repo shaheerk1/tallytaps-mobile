@@ -4,7 +4,7 @@ TallyTaps is an offline-first field recorder and quick-billing companion for non
 
 ## Quick recording
 
-Cash, card, stock, and note entries are written to SQLite immediately. Images and audio upload before their owning record, and failed uploads remain locally retryable.
+Cash, card, stock, and note entries are written to SQLite immediately. Images and audio upload before their owning record, and failed uploads remain locally retryable. In Server connection settings, the user can keep the hassle-free default of every POS inbox or select one POS destination for these quick records.
 
 ## Quick billing
 

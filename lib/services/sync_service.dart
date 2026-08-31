@@ -122,6 +122,8 @@ class SyncService {
 
   Future<void> forgetConnection() => _config.clear();
 
+  Future<void> saveConnection(SyncConnection connection) => _config.save(connection);
+
   Future<List<PosCatalogNode>> listPosNodes(SyncConnection connection) async {
     final body = await _deviceGet(connection, '/api/v1/mobile/pos-nodes');
     final nodes = body['nodes'];
@@ -255,6 +257,10 @@ class SyncService {
                   .where((asset) => asset.uploaded)
                   .map((asset) => asset.remoteId)
                   .toList(),
+              'deliveryScope': connection.deliveryScope,
+              'targetPosNodeIds': connection.deliveryScope == 'selected'
+                  ? connection.targetPosNodeIds
+                  : const <String>[],
             }),
           )
           .timeout(const Duration(seconds: 20));
