@@ -16,7 +16,7 @@ class PosCatalogNode {
     nickname: (map['nickname'] as String?)?.trim().isNotEmpty == true
         ? map['nickname']
         : 'POS catalog',
-    itemCount: (map['itemCount'] as num?)?.toInt() ?? 0,
+    itemCount: _asInt(map['itemCount']),
     catalogUpdatedAt: DateTime.tryParse('${map['catalogUpdatedAt'] ?? ''}'),
   );
   Map<String, Object?> toMap() => {
@@ -46,16 +46,12 @@ class CatalogItem {
   String get pricingBasis =>
       attributes['pricing_basis'] == 'kilos' ? 'kilos' : 'qty';
   bool get priceOverrideAllowed =>
-      attributes['price_override_allowed'] == true ||
-      attributes['price_override_allowed'] == 1;
-  double get quantityStep =>
-      (attributes['quantity_step'] as num?)?.toDouble() ?? 1;
-  double get bagCharge => (attributes['bag_charge'] as num?)?.toDouble() ?? 0;
-  double get wageCharge => (attributes['wage_charge'] as num?)?.toDouble() ?? 0;
-  double? get minimumSellPrice =>
-      (attributes['minimum_sell_price'] as num?)?.toDouble();
-  double? get maximumSellPrice =>
-      (attributes['maximum_sell_price'] as num?)?.toDouble();
+      _asBool(attributes['price_override_allowed']);
+  double get quantityStep => _asDouble(attributes['quantity_step']) ?? 1;
+  double get bagCharge => _asDouble(attributes['bag_charge']) ?? 0;
+  double get wageCharge => _asDouble(attributes['wage_charge']) ?? 0;
+  double? get minimumSellPrice => _asDouble(attributes['minimum_sell_price']);
+  double? get maximumSellPrice => _asDouble(attributes['maximum_sell_price']);
   String get wageBasis => '${attributes['wage_basis'] ?? 'fixed'}';
   factory CatalogItem.fromApi(String nodeId, Map<String, dynamic> map) =>
       CatalogItem(
@@ -66,7 +62,7 @@ class CatalogItem {
         barcode: map['barcode'] as String?,
         category: map['category'] as String?,
         unit: map['unit'] as String?,
-        unitPrice: (map['unitPrice'] as num?)?.toDouble() ?? 0,
+        unitPrice: _asDouble(map['unitPrice']) ?? 0,
         attributes: Map<String, dynamic>.from(
           map['attributes'] is Map ? map['attributes'] as Map : {},
         ),
@@ -90,7 +86,7 @@ class CatalogItem {
     barcode: map['barcode'] as String?,
     category: map['category'] as String?,
     unit: map['unit'] as String?,
-    unitPrice: (map['unit_price'] as num).toDouble(),
+    unitPrice: _asDouble(map['unit_price']) ?? 0,
     attributes: Map<String, dynamic>.from(
       jsonDecode(map['attributes'] as String) as Map,
     ),
@@ -183,3 +179,27 @@ class MobileBill {
 }
 
 double _money(double value) => (value * 100).round() / 100;
+
+double? _asDouble(Object? value) {
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value.trim());
+  return null;
+}
+
+int _asInt(Object? value) {
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value.trim()) ?? 0;
+  return 0;
+}
+
+bool _asBool(Object? value) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    return switch (value.trim().toLowerCase()) {
+      'true' || '1' || 'yes' || 'on' => true,
+      _ => false,
+    };
+  }
+  return false;
+}
