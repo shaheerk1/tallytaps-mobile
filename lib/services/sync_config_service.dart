@@ -15,6 +15,7 @@ class SyncConnection {
     this.requestSecret,
     this.deliveryScope = 'all',
     this.targetPosNodeIds = const [],
+    this.monitorAccess = false,
   });
 
   final String serverUrl;
@@ -26,6 +27,13 @@ class SyncConnection {
   final String? requestSecret;
   final String deliveryScope;
   final List<String> targetPosNodeIds;
+
+  /// Whether the host has granted this device Business Monitor access.
+  ///
+  /// The server decides this and re-checks it on every monitor request; the
+  /// stored copy only decides whether the entry point is drawn before the first
+  /// call comes back. It is never trusted as authorization.
+  final bool monitorAccess;
 
   bool get isConnected => status == ConnectionStatus.connected && deviceToken != null;
 
@@ -46,6 +54,21 @@ class SyncConnection {
     requestSecret: requestSecret ?? this.requestSecret,
     deliveryScope: deliveryScope ?? this.deliveryScope,
     targetPosNodeIds: targetPosNodeIds ?? this.targetPosNodeIds,
+    monitorAccess: monitorAccess,
+  );
+
+  /// Kept separate from [copyWith] so the grant can be cleared, not just set.
+  SyncConnection withMonitorAccess(bool granted) => SyncConnection(
+    serverUrl: serverUrl,
+    hostCode: hostCode,
+    deviceId: deviceId,
+    status: status,
+    deviceToken: deviceToken,
+    requestId: requestId,
+    requestSecret: requestSecret,
+    deliveryScope: deliveryScope,
+    targetPosNodeIds: targetPosNodeIds,
+    monitorAccess: granted,
   );
 
   Map<String, Object?> toMap() => {
@@ -58,6 +81,7 @@ class SyncConnection {
     'requestSecret': requestSecret,
     'deliveryScope': deliveryScope,
     'targetPosNodeIds': targetPosNodeIds,
+    'monitorAccess': monitorAccess,
   };
 
   factory SyncConnection.fromMap(Map<String, Object?> map) => SyncConnection(
@@ -76,6 +100,7 @@ class SyncConnection {
             ?.whereType<String>()
             .toList(growable: false) ??
         const [],
+    monitorAccess: map['monitorAccess'] == true,
   );
 }
 

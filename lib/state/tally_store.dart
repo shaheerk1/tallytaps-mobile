@@ -32,16 +32,26 @@ class TallyStore extends ChangeNotifier {
   int _lastRecordedNonce = 0;
   SyncConnection? _connection;
   bool _syncing = false;
+  bool _syncingBills = false;
   String? _lastSyncError;
   int _pendingBillCount = 0;
+  List<MobileBill> _mobileBills = [];
 
   List<TallyAction> get actions => _actions;
   bool get loading => _loading;
   SyncConnection? get connection => _connection;
-  bool get syncing => _syncing;
+  bool get syncing => _syncing || _syncingBills;
   String? get lastSyncError => _lastSyncError;
   bool get isConnected => _connection?.isConnected ?? false;
   int get pendingBillCount => _pendingBillCount;
+  List<MobileBill> get mobileBills => _mobileBills;
+
+  /// Whether this device may open the Business Monitor.
+  ///
+  /// Only the host grants this, and the server re-checks it on every monitor
+  /// request. The stored copy decides whether the entry point is drawn before
+  /// the first call answers; it is never treated as authorization.
+  bool get monitorAccess => _connection?.monitorAccess ?? false;
 
   /// The most recently recorded action, shown as a success banner on home.
   TallyAction? get lastRecorded => _lastRecorded;
@@ -72,12 +82,44 @@ class TallyStore extends ChangeNotifier {
     _actions = await _repo.getAll();
     _connection = await _syncService.loadConnection();
     _pendingBillCount = await _billingRepository.pendingCount();
+    _mobileBills = await _billingRepository.bills();
     _loading = false;
     notifyListeners();
     if (isConnected && unsynced.isNotEmpty) {
       unawaited(syncPending());
     }
     if (isConnected && _pendingBillCount > 0) unawaited(syncPendingBills());
+    if (isConnected) unawaited(refreshDeviceSession());
+  }
+
+  /// Re-reads what the host allows this device to do. Runs on launch and
+  /// whenever the connection screen opens, so a privilege granted or withdrawn
+  /// in the portal reaches the phone without re-pairing.
+  Future<void> refreshDeviceSession() async {
+    final connection = _connection;
+    if (connection == null || !connection.isConnected) return;
+    try {
+      final session = await _syncService.fetchSession(connection);
+      await _applyMonitorAccess(session.businessMonitor);
+    } on SyncFailure {
+      // Offline or a transient server problem: keep whatever is stored rather
+      // than hiding a monitor the host has not actually withdrawn.
+    } on MonitorAccessRevoked {
+      await _applyMonitorAccess(false);
+    }
+  }
+
+  /// Called when a monitor request is refused, so the view disappears the
+  /// moment the host withdraws access rather than at the next launch.
+  Future<void> onMonitorAccessRevoked() => _applyMonitorAccess(false);
+
+  Future<void> _applyMonitorAccess(bool granted) async {
+    final connection = _connection;
+    if (connection == null || connection.monitorAccess == granted) return;
+    final updated = connection.withMonitorAccess(granted);
+    await _syncService.saveConnection(updated);
+    _connection = updated;
+    notifyListeners();
   }
 
   Future<TallyAction> record({
@@ -202,7 +244,10 @@ class TallyStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateRecordRouting({required String deliveryScope, String? targetPosNodeId}) async {
+  Future<void> updateRecordRouting({
+    required String deliveryScope,
+    String? targetPosNodeId,
+  }) async {
     final connection = _connection;
     if (connection == null) return;
     final selected = deliveryScope == 'selected' && targetPosNodeId != null;
@@ -308,6 +353,10 @@ class TallyStore extends ChangeNotifier {
   Future<bool> submitMobileBill(MobileBill bill) async {
     await _billingRepository.saveBill(bill);
     _pendingBillCount = await _billingRepository.pendingCount();
+    _mobileBills.removeWhere(
+      (saved) => saved.clientBillId == bill.clientBillId,
+    );
+    _mobileBills.insert(0, bill);
     notifyListeners();
     final connection = _connection;
     if (connection?.isConnected != true) return false;
@@ -319,6 +368,7 @@ class TallyStore extends ChangeNotifier {
       await _billingRepository.markBillSynced(bill.clientBillId, id);
       bill.synced = true;
       bill.serverId = id;
+      bill.lastError = null;
       _pendingBillCount = await _billingRepository.pendingCount();
       notifyListeners();
       return true;
@@ -327,6 +377,7 @@ class TallyStore extends ChangeNotifier {
         bill.clientBillId,
         error.toString(),
       );
+      bill.lastError = error.toString();
       _lastSyncError = error.toString();
       notifyListeners();
       return false;
@@ -335,25 +386,32 @@ class TallyStore extends ChangeNotifier {
 
   Future<int> syncPendingBills() async {
     final connection = _connection;
-    if (connection?.isConnected != true) return 0;
-    var synced = 0;
-    for (final payload in await _billingRepository.pendingBills()) {
-      final clientId = '${payload['clientBillId']}';
-      try {
-        final id = await _syncService.submitMobileBillPayload(
-          connection!,
-          payload,
-        );
-        await _billingRepository.markBillSynced(clientId, id);
-        synced++;
-      } catch (error) {
-        await _billingRepository.markBillError(clientId, error.toString());
-        _lastSyncError = error.toString();
-        break;
-      }
-    }
-    _pendingBillCount = await _billingRepository.pendingCount();
+    if (connection?.isConnected != true || _syncingBills) return 0;
+    _syncingBills = true;
     notifyListeners();
-    return synced;
+    var synced = 0;
+    try {
+      for (final payload in await _billingRepository.pendingBills()) {
+        final clientId = '${payload['clientBillId']}';
+        try {
+          final id = await _syncService.submitMobileBillPayload(
+            connection!,
+            payload,
+          );
+          await _billingRepository.markBillSynced(clientId, id);
+          synced++;
+        } catch (error) {
+          await _billingRepository.markBillError(clientId, error.toString());
+          _lastSyncError = error.toString();
+          break;
+        }
+      }
+      _pendingBillCount = await _billingRepository.pendingCount();
+      _mobileBills = await _billingRepository.bills();
+      return synced;
+    } finally {
+      _syncingBills = false;
+      notifyListeners();
+    }
   }
 }

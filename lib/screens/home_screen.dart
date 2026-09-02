@@ -9,6 +9,7 @@ import '../models/tally_action.dart';
 import '../state/tally_store.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../monitor/monitor_screen.dart';
 import '../widgets/category_button.dart';
 import 'entry_screen.dart';
 import 'history_screen.dart';
@@ -37,6 +38,15 @@ class HomeScreen extends StatelessWidget {
               outgoing: store.todayOutgoing(),
               count: store.today.length,
             ),
+            // Shown only while the host grants this device monitor access.
+            // The server re-checks on every request, so a withdrawn grant
+            // removes this entry point as soon as the app next asks.
+            if (store.monitorAccess)
+              _MonitorEntry(
+                onOpen: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const MonitorScreen()),
+                ),
+              ),
             Expanded(
               child: store.lastRecorded != null
                   ? _SuccessBanner(
@@ -55,6 +65,84 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Entry point to the Business Monitor.
+///
+/// Deliberately a single quiet strip rather than a dock button: recording an
+/// action stays the fastest thing on this screen, and only some devices ever
+/// see this at all.
+class _MonitorEntry extends StatelessWidget {
+  const _MonitorEntry({required this.onOpen});
+
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      child: Material(
+        color: AppColors.ink,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () {
+            tapHaptic();
+            onOpen();
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: const Icon(
+                    Icons.insights_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Business Monitor',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      SizedBox(height: 1),
+                      Text(
+                        'Sales, cash, stock and bills from every POS',
+                        style: TextStyle(
+                          color: Color(0xFFB9C3CE),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFFB9C3CE),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

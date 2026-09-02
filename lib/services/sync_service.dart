@@ -19,6 +19,50 @@ class SyncFailure implements Exception {
   String toString() => message;
 }
 
+/// The host withdrew this device's Business Monitor access, or never granted
+/// it. Seeing this is what makes the app clear its stored grant and hide the
+/// monitor entirely.
+class MonitorAccessRevoked implements Exception {
+  const MonitorAccessRevoked([
+    this.message =
+        'Business monitor access is no longer granted to this device.',
+  ]);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// What the server says this device may do. Read on launch and after pairing;
+/// the device never asserts its own privileges.
+class DeviceSession {
+  const DeviceSession({
+    required this.deviceName,
+    required this.hostCode,
+    required this.hostName,
+    required this.businessMonitor,
+  });
+
+  final String deviceName;
+  final String hostCode;
+  final String hostName;
+  final bool businessMonitor;
+
+  factory DeviceSession.fromMap(Map<String, dynamic> map) {
+    final device = map['device'];
+    final capabilities = map['capabilities'];
+    String field(String key, String fallback) =>
+        device is Map ? (device[key] as String? ?? fallback) : fallback;
+    return DeviceSession(
+      deviceName: field('name', 'This device'),
+      hostCode: field('hostCode', ''),
+      hostName: field('hostName', ''),
+      businessMonitor:
+          capabilities is Map && capabilities['businessMonitor'] == true,
+    );
+  }
+}
+
 class SyncService {
   SyncService({
     SyncConfigService? config,
@@ -124,6 +168,37 @@ class SyncService {
 
   Future<void> saveConnection(SyncConnection connection) => _config.save(connection);
 
+  /// Asks the server what this device is allowed to do, so a privilege granted
+  /// or withdrawn in the portal is picked up without re-pairing.
+  Future<DeviceSession> fetchSession(SyncConnection connection) async {
+    return DeviceSession.fromMap(
+      await _deviceGet(connection, '/api/v1/mobile/session'),
+    );
+  }
+
+  /// Reads one Business Monitor endpoint. The server re-checks the grant on
+  /// every call, so a refusal here is the signal to hide the monitor.
+  Future<Map<String, dynamic>> monitorGet(
+    SyncConnection connection,
+    String path, {
+    Map<String, String> query = const {},
+  }) async {
+    final pairs = query.entries
+        .where((entry) => entry.value.isNotEmpty)
+        .map(
+          (entry) =>
+              '${Uri.encodeQueryComponent(entry.key)}='
+              '${Uri.encodeQueryComponent(entry.value)}',
+        )
+        .join('&');
+    final suffix = pairs.isEmpty ? '' : '?$pairs';
+    return _deviceGet(
+      connection,
+      '/api/v1/monitor$path$suffix',
+      monitor: true,
+    );
+  }
+
   Future<List<PosCatalogNode>> listPosNodes(SyncConnection connection) async {
     final body = await _deviceGet(connection, '/api/v1/mobile/pos-nodes');
     final nodes = body['nodes'];
@@ -188,8 +263,9 @@ class SyncService {
 
   Future<Map<String, dynamic>> _deviceGet(
     SyncConnection connection,
-    String path,
-  ) async {
+    String path, {
+    bool monitor = false,
+  }) async {
     final token = connection.deviceToken;
     if (!connection.isConnected || token == null) {
       throw const SyncFailure('Connect this device before loading POS data.');
@@ -199,8 +275,17 @@ class SyncService {
           _apiUri(connection.serverUrl, path),
           headers: {HttpHeaders.authorizationHeader: 'Bearer $token'},
         )
-        .timeout(const Duration(seconds: 20));
+        .timeout(const Duration(seconds: 25));
     final body = _decode(response);
+    if (monitor && response.statusCode == 403) {
+      throw MonitorAccessRevoked(
+        _message(
+          body,
+          fallback:
+              'Business monitor access is no longer granted to this device.',
+        ),
+      );
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw SyncFailure(_message(body, fallback: 'Could not load POS data.'));
     }

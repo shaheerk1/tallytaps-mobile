@@ -35,6 +35,9 @@ class _SyncSetupScreenState extends State<SyncSetupScreen> {
       _serverController.text = connection.serverUrl;
       _hostController.text = connection.hostCode;
       if (connection.status == ConnectionStatus.pending) _beginPolling();
+      if (connection.isConnected) {
+        unawaited(context.read<TallyStore>().refreshDeviceSession());
+      }
     }
   }
 
@@ -382,6 +385,10 @@ class _ConnectedCardState extends State<_ConnectedCard> {
   }
 
   Future<void> _loadNodes() async {
+    // The same visit that refreshes POS destinations also refreshes what this
+    // device is allowed to do, so a privilege granted or withdrawn in the
+    // portal is reflected here without re-pairing.
+    unawaited(widget.store.refreshDeviceSession());
     try {
       final nodes = await widget.store.loadPosNodes();
       if (mounted) setState(() => _nodes = nodes);
@@ -417,6 +424,13 @@ class _ConnectedCardState extends State<_ConnectedCard> {
         _DetailRow(label: 'HOST ID', value: widget.connection.hostCode),
         const SizedBox(height: 9),
         _DetailRow(label: 'SERVER', value: widget.connection.serverUrl),
+        const SizedBox(height: 9),
+        _DetailRow(
+          label: 'BUSINESS MONITOR',
+          value: widget.store.monitorAccess
+              ? 'Granted by the host'
+              : 'Not granted — recording only',
+        ),
         const SizedBox(height: 20),
         const Text('QUICK RECORD DESTINATION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.inkFaint, letterSpacing: 0.5)),
         const SizedBox(height: 7),

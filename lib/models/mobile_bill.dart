@@ -150,6 +150,56 @@ class MobileBillLine {
   );
   double get lineTotal =>
       _money(merchandiseTotal + bagChargeTotal + wageChargeTotal);
+
+  factory MobileBillLine.fromApi(
+    String catalogNodeId,
+    Map<String, dynamic> map,
+  ) {
+    final snapshot = Map<String, dynamic>.from(
+      map['productSnapshot'] is Map ? map['productSnapshot'] as Map : {},
+    );
+    snapshot.addAll({
+      'pricing_basis': _asText(map['pricingBasis']) ?? 'qty',
+      'handling_uom': _asText(map['handlingUom']),
+      'base_uom': _asText(map['baseUom']),
+      'dual_uom_enabled': map['dualUomEnabled'],
+      'requires_kilos': map['requiresMeasuredQuantity'],
+      'allow_zero_quantity': map['allowZeroQuantity'],
+      'quantity_step': map['quantityStep'],
+      'bag_charge': map['packagingChargeRate'] ?? map['bagChargeRate'],
+      'wage_charge': map['wageChargeRate'],
+      'wage_basis': map['wageBasis'],
+      'price_override_allowed': map['priceOverrideAllowed'],
+      'price_override_reason_required': map['priceOverrideReasonRequired'],
+      'minimum_sell_price': map['minimumSellPrice'],
+      'maximum_sell_price': map['maximumSellPrice'],
+    });
+    snapshot.removeWhere((_, value) => value == null);
+
+    final chargedPrice = _asDouble(map['unitPrice']) ?? 0;
+    final catalogPrice = _asDouble(map['catalogUnitPrice']) ?? chargedPrice;
+    final item = CatalogItem(
+      nodeId: catalogNodeId,
+      sourceProductKey: '${map['sourceProductKey'] ?? ''}',
+      name: _asText(map['description']) ?? 'Item',
+      sku: _asText(map['sku']),
+      barcode: _asText(map['barcode']),
+      unit: _asText(map['baseUom']) ?? _asText(map['handlingUom']),
+      unitPrice: catalogPrice,
+      attributes: snapshot,
+    );
+    return MobileBillLine(
+      item: item,
+      quantity:
+          _asDouble(map['handlingQuantity'] ?? map['quantity']) ?? 0,
+      kilos: _asDouble(map['measuredQuantity'] ?? map['kilos']),
+      unitPriceOverride:
+          _asBool(map['priceOverrideApplied']) || chargedPrice != catalogPrice
+          ? chargedPrice
+          : null,
+      priceOverrideReason: _asText(map['priceOverrideReason']),
+    );
+  }
   Map<String, Object?> toApi() => {
     'sourceProductKey': item.sourceProductKey,
     'sku': item.sku,
@@ -202,6 +252,7 @@ class MobileBill {
     this.note,
     this.synced = false,
     this.serverId,
+    this.lastError,
   });
   final String clientBillId, catalogPosNodeId, deliveryScope, paymentMethod;
   final List<String> targetPosNodeIds;
@@ -209,7 +260,7 @@ class MobileBill {
   final DateTime createdAt;
   final String? customerName, customerMobile, note;
   bool synced;
-  String? serverId;
+  String? serverId, lastError;
   double get grandTotal =>
       _money(lines.fold(0, (sum, line) => sum + line.lineTotal));
   Map<String, Object?> toApi() => {
@@ -228,6 +279,52 @@ class MobileBill {
             {'method': paymentMethod, 'amount': grandTotal},
           ],
   };
+
+  factory MobileBill.fromApi(
+    Map<String, dynamic> map, {
+    bool synced = false,
+    String? serverId,
+    String? lastError,
+  }) {
+    final catalogNodeId = '${map['catalogPosNodeId'] ?? ''}';
+    final rawLines = map['lines'] is List ? map['lines'] as List : const [];
+    final rawTargets = map['targetPosNodeIds'] is List
+        ? map['targetPosNodeIds'] as List
+        : const [];
+    final payments = map['payments'] is List
+        ? map['payments'] as List
+        : const [];
+    String paymentMethod = 'unpaid';
+    if (payments.isNotEmpty && payments.first is Map) {
+      paymentMethod =
+          _asText((payments.first as Map)['method']) ?? paymentMethod;
+    }
+    return MobileBill(
+      clientBillId: '${map['clientBillId'] ?? ''}',
+      catalogPosNodeId: catalogNodeId,
+      deliveryScope: _asText(map['deliveryScope']) ?? 'all',
+      targetPosNodeIds: rawTargets.map((value) => '$value').toList(),
+      customerName: _asText(map['customerName']),
+      customerMobile: _asText(map['customerMobile']),
+      note: _asText(map['note']),
+      createdAt:
+          DateTime.tryParse('${map['createdAt'] ?? ''}')?.toLocal() ??
+          DateTime.now(),
+      lines: rawLines
+          .whereType<Map>()
+          .map(
+            (line) => MobileBillLine.fromApi(
+              catalogNodeId,
+              Map<String, dynamic>.from(line),
+            ),
+          )
+          .toList(),
+      paymentMethod: paymentMethod,
+      synced: synced,
+      serverId: serverId,
+      lastError: lastError,
+    );
+  }
 }
 
 double _money(double value) => (value * 100).round() / 100;

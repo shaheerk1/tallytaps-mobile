@@ -113,6 +113,22 @@ class BillingRepository {
         .toList();
   }
 
+  Future<List<MobileBill>> bills() async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query('mobile_bills', orderBy: 'created_at DESC');
+    return rows.map((row) {
+      final payload = Map<String, dynamic>.from(
+        jsonDecode(row['payload'] as String) as Map,
+      );
+      return MobileBill.fromApi(
+        payload,
+        synced: (row['synced'] as num).toInt() == 1,
+        serverId: row['server_id'] as String?,
+        lastError: row['last_error'] as String?,
+      );
+    }).toList();
+  }
+
   Future<int> pendingCount() async {
     final db = await AppDatabase.instance.database;
     final rows = await db.rawQuery(

@@ -118,4 +118,47 @@ void main() {
     expect(item.unitPrice, 42.25);
     expect(item.bagCharge, 3.5);
   });
+
+  test('saved mobile bill payload restores its lines and sync metadata', () {
+    const item = CatalogItem(
+      nodeId: 'node-1',
+      sourceProductKey: '17',
+      name: 'Field rice',
+      unitPrice: 120,
+      attributes: {
+        'handling_uom': 'bag',
+        'base_uom': 'kg',
+        'dual_uom_enabled': 1,
+        'pricing_basis': 'kilos',
+        'bag_charge': 5,
+      },
+    );
+    final original = MobileBill(
+      clientBillId: 'bill-1',
+      catalogPosNodeId: 'node-1',
+      deliveryScope: 'all',
+      targetPosNodeIds: const [],
+      lines: [MobileBillLine(item: item, quantity: 2, kilos: 25)],
+      paymentMethod: 'cash',
+      customerName: 'Nimal',
+      createdAt: DateTime.utc(2026, 9, 2, 4, 30),
+    );
+
+    final restored = MobileBill.fromApi(
+      Map<String, dynamic>.from(original.toApi()),
+      synced: true,
+      serverId: 'server-7',
+    );
+
+    expect(restored.clientBillId, 'bill-1');
+    expect(restored.customerName, 'Nimal');
+    expect(restored.paymentMethod, 'cash');
+    expect(restored.lines.single.item.name, 'Field rice');
+    expect(restored.lines.single.quantity, 2);
+    expect(restored.lines.single.kilos, 25);
+    expect(restored.lines.single.item.handlingUom, 'bag');
+    expect(restored.grandTotal, original.grandTotal);
+    expect(restored.synced, isTrue);
+    expect(restored.serverId, 'server-7');
+  });
 }
