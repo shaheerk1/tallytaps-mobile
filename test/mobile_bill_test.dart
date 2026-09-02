@@ -30,6 +30,10 @@ void main() {
       'unitPrice': '100.50',
       'attributes': {
         'pricing_basis': 'kilos',
+        'handling_uom': 'box',
+        'base_uom': 'kg',
+        'dual_uom_enabled': '1',
+        'requires_kilos': '1',
         'quantity_step': '0.25',
         'bag_charge': '4.00',
         'wage_charge': '2.50',
@@ -41,6 +45,10 @@ void main() {
     });
 
     expect(item.unitPrice, 100.5);
+    expect(item.handlingUom, 'box');
+    expect(item.baseUom, 'kg');
+    expect(item.dualUomEnabled, isTrue);
+    expect(item.requiresMeasuredQuantity, isTrue);
     expect(item.quantityStep, 0.25);
     expect(item.bagCharge, 4);
     expect(item.wageCharge, 2.5);
@@ -53,6 +61,45 @@ void main() {
     expect(line.bagChargeTotal, 8);
     expect(line.wageChargeTotal, 7.5);
     expect(line.lineTotal, 317);
+    expect(line.isValid, isTrue);
+    expect(line.toApi(), containsPair('handlingQuantity', 2));
+    expect(line.toApi(), containsPair('measuredQuantity', 3));
+    expect(line.toApi(), containsPair('handlingUom', 'box'));
+    expect(line.toApi(), containsPair('baseUom', 'kg'));
+    expect(line.toApi(), containsPair('packagingChargeRate', 4));
+  });
+
+  test('dual UoM line enforces measured quantity and price-change reason', () {
+    const item = CatalogItem(
+      nodeId: 'node-1',
+      sourceProductKey: '9',
+      name: 'Variable box',
+      unitPrice: 10,
+      attributes: {
+        'handling_uom': 'box',
+        'base_uom': 'kg',
+        'dual_uom_enabled': 1,
+        'allow_zero_quantity': 1,
+        'pricing_basis': 'kilos',
+        'price_override_allowed': 1,
+        'price_override_reason_required': 1,
+      },
+    );
+
+    final line = MobileBillLine(item: item, quantity: 0, unitPriceOverride: 12);
+    expect(line.isValid, isFalse);
+
+    line.kilos = 2.5;
+    expect(line.isValid, isFalse);
+
+    line.priceOverrideReason = 'Field-agreed rate';
+    expect(line.isValid, isTrue);
+    expect(line.lineTotal, 30);
+    expect(line.toApi(), containsPair('priceOverrideApplied', true));
+    expect(
+      line.toApi(),
+      containsPair('priceOverrideReason', 'Field-agreed rate'),
+    );
   });
 
   test('catalog database hydration tolerates numeric strings', () {

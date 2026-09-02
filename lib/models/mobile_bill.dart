@@ -45,14 +45,33 @@ class CatalogItem {
   final Map<String, dynamic> attributes;
   String get pricingBasis =>
       attributes['pricing_basis'] == 'kilos' ? 'kilos' : 'qty';
+  String get handlingUom =>
+      _asText(attributes['handling_uom']) ?? _asText(unit) ?? 'unit';
+  String? get baseUom =>
+      _asText(attributes['base_uom']) ??
+      (requiresMeasuredQuantity ? _asText(unit) ?? 'measured unit' : null);
+  bool get dualUomEnabled => _asBool(attributes['dual_uom_enabled']);
+  bool get requiresMeasuredQuantity =>
+      dualUomEnabled ||
+      pricingBasis == 'kilos' ||
+      _asBool(attributes['requires_kilos']);
+  bool get allowZeroQuantity => _asBool(attributes['allow_zero_quantity']);
   bool get priceOverrideAllowed =>
       _asBool(attributes['price_override_allowed']);
+  bool get priceOverrideReasonRequired =>
+      _asBool(attributes['price_override_reason_required']);
   double get quantityStep => _asDouble(attributes['quantity_step']) ?? 1;
   double get bagCharge => _asDouble(attributes['bag_charge']) ?? 0;
   double get wageCharge => _asDouble(attributes['wage_charge']) ?? 0;
   double? get minimumSellPrice => _asDouble(attributes['minimum_sell_price']);
   double? get maximumSellPrice => _asDouble(attributes['maximum_sell_price']);
-  String get wageBasis => '${attributes['wage_basis'] ?? 'fixed'}';
+  String get wageBasis {
+    final value = _asText(attributes['wage_basis']) ?? 'none';
+    return const {'qty', 'kilos'}.contains(value) ? value : 'none';
+  }
+
+  String get priceUom =>
+      pricingBasis == 'kilos' ? baseUom ?? 'measured unit' : handlingUom;
   factory CatalogItem.fromApi(String nodeId, Map<String, dynamic> map) =>
       CatalogItem(
         nodeId: nodeId,
@@ -99,13 +118,26 @@ class MobileBillLine {
     this.quantity = 1,
     this.kilos,
     this.unitPriceOverride,
+    this.priceOverrideReason,
   });
   final CatalogItem item;
   double quantity;
   double? kilos;
   double? unitPriceOverride;
+  String? priceOverrideReason;
   double get unitPrice => unitPriceOverride ?? item.unitPrice;
   double get measure => item.pricingBasis == 'kilos' ? (kilos ?? 0) : quantity;
+  bool get hasPriceOverride =>
+      unitPriceOverride != null &&
+      (unitPriceOverride! - item.unitPrice).abs() >= .005;
+  bool get isValid =>
+      quantity >= 0 &&
+      (item.allowZeroQuantity || quantity > 0) &&
+      (!item.requiresMeasuredQuantity || (kilos ?? 0) > 0) &&
+      measure > 0 &&
+      (!item.priceOverrideReasonRequired ||
+          !hasPriceOverride ||
+          (priceOverrideReason?.trim().isNotEmpty ?? false));
   double get merchandiseTotal => _money(unitPrice * measure);
   double get bagChargeTotal => _money(item.bagCharge * quantity);
   double get wageChargeTotal => _money(
@@ -114,7 +146,7 @@ class MobileBillLine {
             ? (kilos ?? 0)
             : item.wageBasis == 'qty'
             ? quantity
-            : 1),
+            : 0),
   );
   double get lineTotal =>
       _money(merchandiseTotal + bagChargeTotal + wageChargeTotal);
@@ -125,11 +157,31 @@ class MobileBillLine {
     'description': item.name,
     'quantity': quantity,
     'kilos': kilos,
+    'handlingQuantity': quantity,
+    'measuredQuantity': kilos,
+    'handlingUom': item.handlingUom,
+    'baseUom': item.baseUom,
+    'dualUomEnabled': item.dualUomEnabled,
+    'requiresMeasuredQuantity': item.requiresMeasuredQuantity,
+    'quantityStep': item.quantityStep,
+    'allowZeroQuantity': item.allowZeroQuantity,
     'pricingBasis': item.pricingBasis,
     'unitPrice': unitPrice,
+    'catalogUnitPrice': item.unitPrice,
+    'priceOverrideApplied': hasPriceOverride,
+    'priceOverrideAllowed': item.priceOverrideAllowed,
+    'priceOverrideReasonRequired': item.priceOverrideReasonRequired,
+    'minimumSellPrice': item.minimumSellPrice,
+    'maximumSellPrice': item.maximumSellPrice,
+    'priceOverrideReason': hasPriceOverride ? priceOverrideReason : null,
     'discount': 0,
     'tax': 0,
+    'bagChargeRate': item.bagCharge,
+    'packagingChargeRate': item.bagCharge,
     'bagChargeTotal': bagChargeTotal,
+    'packagingChargeTotal': bagChargeTotal,
+    'wageChargeRate': item.wageCharge,
+    'wageBasis': item.wageBasis,
     'wageChargeTotal': wageChargeTotal,
     'lineTotal': lineTotal,
     'productSnapshot': item.attributes,
@@ -202,4 +254,10 @@ bool _asBool(Object? value) {
     };
   }
   return false;
+}
+
+String? _asText(Object? value) {
+  if (value == null) return null;
+  final text = '$value'.trim();
+  return text.isEmpty ? null : text;
 }
