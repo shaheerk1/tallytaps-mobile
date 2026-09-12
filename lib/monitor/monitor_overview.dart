@@ -51,7 +51,7 @@ class _TradingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return MonitorCard(
       title: 'Trading',
-      subtitle: '${scope.rangeLabel} · ${scope.nodeLabel}',
+      subtitle: '${scope.rangeLabel} · ${scope.placeLabel}',
       child: Column(
         children: [
           MetricGrid(
@@ -68,7 +68,9 @@ class _TradingCard extends StatelessWidget {
               MetricTile(
                 label: 'Collected',
                 value: Money.format(data.collected),
-                hint: 'tender taken in',
+                hint: data.cashReturned > 0
+                    ? 'after ${Money.format(data.cashReturned)} paid back'
+                    : 'tender taken in',
                 tone: AppColors.cash,
               ),
               MetricTile(
@@ -397,31 +399,40 @@ class _BreakdownCard extends StatelessWidget {
         ),
       );
     }
+    // Net of returns everywhere: a returned bill reverses a sale, it is not one.
     final max = data.buckets
-        .map((bucket) => bucket.gross)
+        .map((bucket) => bucket.net)
         .fold<double>(0, (a, b) => a > b ? a : b);
-    final total = data.buckets.fold<double>(0, (sum, b) => sum + b.gross);
+    final total = data.buckets.fold<double>(0, (sum, b) => sum + b.net);
+    final returned = data.buckets.fold<double>(0, (sum, b) => sum + b.returned);
     return MonitorCard(
       title: data.label,
       subtitle: '${Money.format(total)} across ${data.buckets.length} '
-          '${data.buckets.length == 1 ? 'group' : 'groups'}',
+          '${data.buckets.length == 1 ? 'group' : 'groups'}'
+          '${returned > 0.005 ? ' · ${Money.format(returned)} returned' : ''}',
       child: Column(
         children: [
           for (final bucket in data.buckets)
             ComparisonBar(
               label: bucket.bucket,
-              value: bucket.gross,
+              value: bucket.net,
               max: max,
-              amount: Money.format(bucket.gross),
-              hint: bucket.credit > 0
-                  ? '${bucket.invoiceCount} bills · ${Money.format(bucket.credit)} on credit'
-                  : '${bucket.invoiceCount} bills',
+              amount: Money.format(bucket.net),
+              hint: _bucketHint(bucket),
               tone: AppColors.brand,
             ),
         ],
       ),
     );
   }
+}
+
+/// What a group is made of, said plainly: bills, credit, and what came back.
+String _bucketHint(MonitorSalesBucket bucket) {
+  final parts = <String>['${bucket.invoiceCount} bills'];
+  if (bucket.credit > 0) parts.add('${Money.format(bucket.credit)} on credit');
+  if (bucket.hasReturns) parts.add('${Money.format(bucket.returned)} returned');
+  return parts.join(' · ');
 }
 
 class _TopItemsCard extends StatelessWidget {

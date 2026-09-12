@@ -25,6 +25,9 @@ class _MonitorBillsTabState extends State<MonitorBillsTab> {
 
   String _query = '';
   bool _outstandingOnly = false;
+  /// 'hide' leaves out bills that came back in full — they are reversed sales,
+  /// not sales. A part-returned bill always stays, marked, at its net value.
+  String _returned = 'hide';
   String _loadedKey = '';
   bool _loading = false;
   bool _loadingMore = false;
@@ -48,7 +51,7 @@ class _MonitorBillsTabState extends State<MonitorBillsTab> {
 
   String get _key {
     final scope = context.read<MonitorScope>();
-    return '${scope.key}|$_query|$_outstandingOnly';
+    return '${scope.key}|$_query|$_outstandingOnly|$_returned';
   }
 
   void _onScroll() {
@@ -70,6 +73,7 @@ class _MonitorBillsTabState extends State<MonitorBillsTab> {
         context.read<MonitorScope>(),
         query: _query,
         outstandingOnly: _outstandingOnly,
+        returned: _returned,
       );
       if (!mounted || key != _key) return;
       setState(() {
@@ -95,6 +99,7 @@ class _MonitorBillsTabState extends State<MonitorBillsTab> {
         context.read<MonitorScope>(),
         query: _query,
         outstandingOnly: _outstandingOnly,
+        returned: _returned,
         offset: _rows.length,
       );
       if (!mounted) return;
@@ -172,15 +177,42 @@ class _MonitorBillsTabState extends State<MonitorBillsTab> {
                   setState(() => _outstandingOnly = value);
                 },
               ),
+              const SizedBox(width: 8),
+              FilterChip(
+                label: const Text('Returned bills'),
+                tooltip: 'Bills returned in full are hidden by default. '
+                    'Bills where only part came back always stay in the list.',
+                selected: _returned != 'hide',
+                onSelected: (value) {
+                  tapHaptic();
+                  setState(() => _returned = value ? 'show' : 'hide');
+                },
+              ),
               const Spacer(),
               if (!_loading)
-                Text(
-                  '${_page.total} bill${_page.total == 1 ? '' : 's'}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.inkFaint,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${_page.total} bill${_page.total == 1 ? '' : 's'}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.inkFaint,
+                      ),
+                    ),
+                    Text(
+                      _page.hasReturns
+                          ? '${Money.format(_page.netTotal)} net · '
+                                '${Money.format(_page.returnedTotal)} returned'
+                          : '${Money.format(_page.netTotal)} net',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                  ],
                 ),
             ],
           ),
@@ -264,14 +296,23 @@ class _BillTile extends StatelessWidget {
         title: invoice.invoiceNumber,
         subtitle: '${invoice.businessDate} · ${invoice.terminal} · '
             '${invoice.customerCode}',
-        trailing: Money.format(invoice.grandTotal),
-        trailingHint: invoice.hasBalance
+        // A returned bill shows what it is now worth, not what it once was.
+        trailing: Money.format(invoice.netTotal),
+        trailingHint: invoice.isReturned
+            ? '${invoice.returnLabel} of ${Money.format(invoice.grandTotal)}'
+            : invoice.hasBalance
             ? '${Money.format(invoice.balance)} unpaid'
             : 'settled',
-        tone: invoice.hasBalance ? AppColors.stock : AppColors.ink,
+        tone: invoice.isFullyReturned
+            ? AppColors.inkFaint
+            : invoice.hasBalance
+            ? AppColors.stock
+            : AppColors.ink,
         leading: StatusPill(
-          label: prettyStatus(invoice.status),
-          tone: statusTone(invoice.status),
+          label: invoice.isReturned
+              ? invoice.returnLabel
+              : prettyStatus(invoice.status),
+          tone: invoice.isReturned ? AppColors.negative : statusTone(invoice.status),
         ),
         onTap: () => pushMonitorRoute(
           context,

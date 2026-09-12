@@ -77,21 +77,78 @@ class MonitorOpenDay {
   );
 }
 
+/// One counter inside a shop.
+class MonitorCounter {
+  const MonitorCounter({required this.macCode, required this.name, required this.nodeId});
+
+  final String macCode;
+  final String name;
+  final String nodeId;
+
+  factory MonitorCounter.fromMap(Map<String, dynamic> map) => MonitorCounter(
+    macCode: _string(map['macCode']),
+    name: _string(map['name'], _string(map['macCode'])),
+    nodeId: _string(map['nodeId']),
+  );
+}
+
+/// One shop.
+///
+/// The location code is what separates one business from another: its own
+/// catalog, its own customers, its own books. Everything the owner reads can be
+/// asked for the whole business, one shop, or one counter inside a shop.
+class MonitorLocation {
+  const MonitorLocation({
+    required this.locCode,
+    required this.name,
+    required this.businessCode,
+    required this.counters,
+  });
+
+  final String locCode;
+  final String name;
+  final String? businessCode;
+  final List<MonitorCounter> counters;
+
+  String get subtitle => counters.isEmpty
+      ? 'No counter has reported yet'
+      : '${counters.length} counter${counters.length == 1 ? '' : 's'} · '
+            '${counters.map((counter) => counter.name).join(' · ')}';
+
+  factory MonitorLocation.fromMap(Map<String, dynamic> map) => MonitorLocation(
+    locCode: _string(map['locCode']),
+    name: _string(map['name'], _string(map['locCode'])),
+    businessCode: map['businessCode'] as String?,
+    counters: _rows(map['terminals']).map(MonitorCounter.fromMap).toList(),
+  );
+}
+
 class MonitorFleet {
   const MonitorFleet({
     required this.nodes,
+    required this.locations,
     required this.terminals,
     required this.openDays,
   });
 
   final List<MonitorNode> nodes;
+  final List<MonitorLocation> locations;
   final List<MonitorTerminal> terminals;
   final List<MonitorOpenDay> openDays;
 
-  static const empty = MonitorFleet(nodes: [], terminals: [], openDays: []);
+  static const empty = MonitorFleet(nodes: [], locations: [], terminals: [], openDays: []);
+
+  MonitorLocation? locationOf(String? locCode) {
+    if (locCode == null) return null;
+    for (final location in locations) {
+      if (location.locCode == locCode) return location;
+    }
+    return null;
+  }
 
   factory MonitorFleet.fromMap(Map<String, dynamic> map) => MonitorFleet(
     nodes: _rows(map['nodes']).map(MonitorNode.fromMap).toList(),
+    locations: _rows(map['locations']).map(MonitorLocation.fromMap).toList(),
     terminals: _rows(map['terminals']).map(MonitorTerminal.fromMap).toList(),
     openDays: _rows(map['openDays']).map(MonitorOpenDay.fromMap).toList(),
   );
@@ -130,6 +187,7 @@ class MonitorOverview {
     required this.net,
     required this.refundCount,
     required this.refundTotal,
+    required this.cashReturned,
     required this.tenders,
     required this.outstandingTotal,
     required this.outstandingInvoices,
@@ -148,7 +206,10 @@ class MonitorOverview {
   final double wageCharge;
   final double net;
   final int refundCount;
+  /// Value of the goods returned, already taken off [net].
   final double refundTotal;
+  /// Money actually handed back, already taken off [collected].
+  final double cashReturned;
   final List<MonitorTotal> tenders;
   final double outstandingTotal;
   final int outstandingInvoices;
@@ -168,7 +229,7 @@ class MonitorOverview {
 
   static const empty = MonitorOverview(
     invoiceCount: 0, gross: 0, collected: 0, credit: 0, discount: 0,
-    bagCharge: 0, wageCharge: 0, net: 0, refundCount: 0, refundTotal: 0,
+    bagCharge: 0, wageCharge: 0, net: 0, refundCount: 0, refundTotal: 0, cashReturned: 0,
     tenders: [], outstandingTotal: 0, outstandingInvoices: 0, cheques: [],
     openShifts: 0, expectedCash: 0, advanceHeld: 0,
   );
@@ -190,6 +251,7 @@ class MonitorOverview {
       net: _money(sales['net']),
       refundCount: _count(refunds['count']),
       refundTotal: _money(refunds['total']),
+      cashReturned: _money(refunds['cashReturned']),
       tenders: _rows(map['tenders'])
           .map((row) => MonitorTotal.fromMap(row, 'method'))
           .toList(),
@@ -211,23 +273,36 @@ class MonitorSalesBucket {
     required this.bucket,
     required this.invoiceCount,
     required this.gross,
+    required this.net,
     required this.collected,
     required this.credit,
+    required this.returned,
+    required this.refundCount,
   });
 
   final String bucket;
   final int invoiceCount;
   final double gross;
+
+  /// Sales after returns. This is the figure every screen shows.
+  final double net;
   final double collected;
   final double credit;
+  final double returned;
+  final int refundCount;
+
+  bool get hasReturns => returned > 0.005;
 
   factory MonitorSalesBucket.fromMap(Map<String, dynamic> map) =>
       MonitorSalesBucket(
         bucket: _string(map['bucket'], '—'),
         invoiceCount: _count(map['invoiceCount']),
         gross: _money(map['gross']),
+        net: map['net'] == null ? _money(map['gross']) : _money(map['net']),
         collected: _money(map['collected']),
         credit: _money(map['credit']),
+        returned: _money(map['returned']),
+        refundCount: _count(map['refundCount']),
       );
 }
 
@@ -305,6 +380,9 @@ class MonitorInvoice {
     required this.grandTotal,
     required this.paidTotal,
     required this.balance,
+    required this.returnedTotal,
+    required this.returnedCashTotal,
+    required this.refundStatus,
   });
 
   final String nodeId;
@@ -320,7 +398,25 @@ class MonitorInvoice {
   final double paidTotal;
   final double balance;
 
+  /// Value of goods returned against this bill, and money handed back.
+  final double returnedTotal;
+  final double returnedCashTotal;
+
+  /// 'none', 'partial', or 'full' — a bill returned in full is a reversed bill.
+  final String refundStatus;
+
   bool get hasBalance => balance > 0.005;
+  bool get isReturned => refundStatus != 'none';
+  bool get isFullyReturned => refundStatus == 'full';
+  String get returnLabel => switch (refundStatus) {
+    'full' => 'Returned',
+    'partial' => 'Part returned',
+    _ => '',
+  };
+
+  /// What the sale is worth after returns, and what the shop kept of it.
+  double get netTotal => grandTotal - returnedTotal;
+  double get netCollected => paidTotal - returnedCashTotal;
   String get terminal => '$locCode/$macCode';
 
   factory MonitorInvoice.fromMap(Map<String, dynamic> map) => MonitorInvoice(
@@ -336,6 +432,9 @@ class MonitorInvoice {
     grandTotal: _money(map['grandTotal']),
     paidTotal: _money(map['paidTotal']),
     balance: _money(map['balance']),
+    returnedTotal: _money(map['returnedTotal']),
+    returnedCashTotal: _money(map['returnedCashTotal']),
+    refundStatus: _string(map['refundStatus'], 'none'),
   );
 }
 
@@ -345,6 +444,9 @@ class MonitorInvoicePage {
     required this.rows,
     required this.offset,
     required this.limit,
+    required this.netTotal,
+    required this.netCollected,
+    required this.returnedTotal,
   });
 
   final int total;
@@ -352,10 +454,19 @@ class MonitorInvoicePage {
   final int offset;
   final int limit;
 
-  bool get hasMore => offset + rows.length < total;
+  /// Totals for everything the filter matched, not just the loaded page,
+  /// and already net of returns.
+  final double netTotal;
+  final double netCollected;
+  final double returnedTotal;
 
-  static const empty =
-      MonitorInvoicePage(total: 0, rows: [], offset: 0, limit: 40);
+  bool get hasMore => offset + rows.length < total;
+  bool get hasReturns => returnedTotal > 0.005;
+
+  static const empty = MonitorInvoicePage(
+    total: 0, rows: [], offset: 0, limit: 40,
+    netTotal: 0, netCollected: 0, returnedTotal: 0,
+  );
 
   factory MonitorInvoicePage.fromMap(Map<String, dynamic> map) =>
       MonitorInvoicePage(
@@ -363,6 +474,9 @@ class MonitorInvoicePage {
         rows: _rows(map['rows']).map(MonitorInvoice.fromMap).toList(),
         offset: _count(map['offset']),
         limit: _count(map['limit']),
+        netTotal: _money(map['netTotal']),
+        netCollected: _money(map['netCollected']),
+        returnedTotal: _money(map['returnedTotal']),
       );
 }
 

@@ -529,7 +529,7 @@ class MonitorReceivablesScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
         children: [
           MonitorAsync<List<MonitorReceivable>>(
-            reloadKey: scope.nodeId ?? 'all',
+            reloadKey: scope.placeKey,
             height: 260,
             load: () => repository.receivables(scope),
             builder: (context, rows) {
@@ -664,7 +664,7 @@ class _MonitorChequesScreenState extends State<MonitorChequesScreen> {
               padding: const EdgeInsets.fromLTRB(14, 8, 14, 28),
               children: [
                 MonitorAsync<MonitorCheques>(
-                  reloadKey: scope.nodeId ?? 'all',
+                  reloadKey: scope.placeKey,
                   height: 260,
                   load: () => repository.cheques(scope),
                   builder: (context, data) {

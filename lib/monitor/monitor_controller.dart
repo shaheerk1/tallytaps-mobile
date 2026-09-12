@@ -5,10 +5,15 @@ import '../services/sync_service.dart';
 import '../state/tally_store.dart';
 import 'monitor_models.dart';
 
-/// The period and terminal every monitor screen reads through.
+/// The period and the place every monitor screen reads through.
 ///
 /// Screens listen to this rather than owning their own filters, so changing the
-/// range once updates the whole section.
+/// range or the place once updates the whole section.
+///
+/// The place is a shop (location code) and, optionally, one counter inside it.
+/// That is the way a business is actually divided: each shop keeps its own
+/// catalog, customers and books. An owner with two shops can read them as one
+/// business, or one shop at a time, or one counter at a time.
 enum RangePreset { today, yesterday, week, month, custom }
 
 extension RangePresetLabel on RangePreset {
@@ -34,7 +39,8 @@ class MonitorScope extends ChangeNotifier {
   RangePreset _preset = RangePreset.today;
   late DateTime _from;
   late DateTime _to;
-  String? _nodeId;
+  String? _locCode;
+  String? _macCode;
   MonitorFleet _fleet = MonitorFleet.empty;
 
   RangePreset get preset => _preset;
@@ -42,11 +48,15 @@ class MonitorScope extends ChangeNotifier {
   DateTime get to => _to;
   String get fromIso => _iso(_from);
   String get toIso => _iso(_to);
-  String? get nodeId => _nodeId;
+  String? get locCode => _locCode;
+  String? get macCode => _macCode;
   MonitorFleet get fleet => _fleet;
 
   /// A stable value screens can watch to know the filters moved.
-  String get key => '${_iso(_from)}|${_iso(_to)}|${_nodeId ?? 'all'}';
+  String get key => '${_iso(_from)}|${_iso(_to)}|$placeKey';
+
+  /// The same, for screens that show standing positions and ignore the dates.
+  String get placeKey => '${_locCode ?? 'all'}|${_macCode ?? 'all'}';
 
   bool get isSingleDay => _iso(_from) == _iso(_to);
 
@@ -56,14 +66,15 @@ class MonitorScope extends ChangeNotifier {
     return '${_iso(_from)} → ${_iso(_to)}';
   }
 
-  String get nodeLabel {
-    if (_nodeId == null) return 'All POS systems';
-    return _fleet.nodes
-        .firstWhere(
-          (node) => node.id == _nodeId,
-          orElse: () => const MonitorNode(id: '', name: 'Selected POS'),
-        )
-        .name;
+  /// What the figures on screen currently cover.
+  String get placeLabel {
+    final location = _fleet.locationOf(_locCode);
+    if (location == null) return _fleet.locations.length > 1 ? 'All shops' : 'Whole business';
+    if (_macCode == null) return location.name;
+    for (final counter in location.counters) {
+      if (counter.macCode == _macCode) return '${location.name} · ${counter.name}';
+    }
+    return '${location.name} · $_macCode';
   }
 
   void applyPreset(RangePreset preset) {
@@ -96,16 +107,25 @@ class MonitorScope extends ChangeNotifier {
     notifyListeners();
   }
 
-  void selectNode(String? nodeId) {
-    if (_nodeId == nodeId) return;
-    _nodeId = nodeId;
+  /// Whole business (both null), one shop, or one counter inside a shop.
+  void selectPlace({String? locCode, String? macCode}) {
+    if (_locCode == locCode && _macCode == macCode) return;
+    _locCode = locCode;
+    _macCode = locCode == null ? null : macCode;
     notifyListeners();
   }
 
   void setFleet(MonitorFleet fleet) {
     _fleet = fleet;
-    if (_nodeId != null && !fleet.nodes.any((node) => node.id == _nodeId)) {
-      _nodeId = null;
+    final location = fleet.locationOf(_locCode);
+    // A shop that is gone cannot stay selected, and neither can its counter.
+    if (_locCode != null && location == null) {
+      _locCode = null;
+      _macCode = null;
+    } else if (_macCode != null &&
+        location != null &&
+        !location.counters.any((counter) => counter.macCode == _macCode)) {
+      _macCode = null;
     }
     notifyListeners();
   }
@@ -147,13 +167,19 @@ class MonitorRepository {
   Map<String, String> _scoped(MonitorScope scope, [Map<String, String> extra = const {}]) => {
     'from': scope.fromIso,
     'to': scope.toIso,
-    if (scope.nodeId != null) 'nodeId': scope.nodeId!,
+    ..._place(scope),
     ...extra,
   };
 
+  /// Standing positions ignore the dates but still belong to a place.
   Map<String, String> _node(MonitorScope scope, [Map<String, String> extra = const {}]) => {
-    if (scope.nodeId != null) 'nodeId': scope.nodeId!,
+    ..._place(scope),
     ...extra,
+  };
+
+  Map<String, String> _place(MonitorScope scope) => {
+    if (scope.locCode != null) 'locCode': scope.locCode!,
+    if (scope.macCode != null) 'macCode': scope.macCode!,
   };
 
   Future<MonitorFleet> fleet() async =>
@@ -167,10 +193,13 @@ class MonitorRepository {
         await _get('/sales', query: _scoped(scope, {'groupBy': groupBy})),
       );
 
+  /// [returned] is 'hide' (bills returned in full are left out), 'show' (every
+  /// bill), or 'only' (just the ones with something returned).
   Future<MonitorInvoicePage> invoices(
     MonitorScope scope, {
     String query = '',
     bool outstandingOnly = false,
+    String returned = 'hide',
     int offset = 0,
   }) async => MonitorInvoicePage.fromMap(
     await _get(
@@ -178,6 +207,7 @@ class MonitorRepository {
       query: _scoped(scope, {
         if (query.isNotEmpty) 'q': query,
         if (outstandingOnly) 'outstandingOnly': 'true',
+        if (returned != 'hide') 'returned': returned,
         'offset': '$offset',
       }),
     ),

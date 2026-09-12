@@ -6,7 +6,6 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import 'monitor_bills.dart';
 import 'monitor_controller.dart';
-import 'monitor_models.dart';
 import 'monitor_operations.dart';
 import 'monitor_overview.dart';
 
@@ -175,13 +174,20 @@ class _FilterBar extends StatelessWidget {
               onPressed: () => _pickRange(context, scope),
             ),
           ),
-          if (scope.fleet.nodes.length > 1)
+          if (scope.fleet.locations.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: ActionChip(
-                avatar: const Icon(Icons.point_of_sale_rounded, size: 17),
-                label: Text(scope.nodeLabel),
-                onPressed: () => _pickNode(context, scope),
+                avatar: Icon(
+                  scope.macCode != null
+                      ? Icons.point_of_sale_rounded
+                      : scope.locCode != null
+                      ? Icons.storefront_rounded
+                      : Icons.apartment_rounded,
+                  size: 17,
+                ),
+                label: Text(scope.placeLabel),
+                onPressed: () => _pickPlace(context, scope),
               ),
             ),
         ],
@@ -200,57 +206,96 @@ class _FilterBar extends StatelessWidget {
     if (picked != null) scope.applyCustom(picked.start, picked.end);
   }
 
-  /// Dismissing the sheet must leave the filter alone, so "all" travels as an
-  /// explicit sentinel rather than as null.
-  static const _allNodes = '__all__';
+  /// Dismissing the sheet must leave the filter alone, so "everything" travels
+  /// as an explicit sentinel rather than as null.
+  static const _wholeBusiness = '__all__';
 
-  Future<void> _pickNode(BuildContext context, MonitorScope scope) async {
+  /// Whole business, one shop, or one counter inside a shop.
+  ///
+  /// Shops are how the business is really divided, so they lead. Counters are
+  /// offered underneath the shop they belong to, for the owner who wants to see
+  /// what one till did.
+  Future<void> _pickPlace(BuildContext context, MonitorScope scope) async {
+    final locations = scope.fleet.locations;
     final selected = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: AppColors.surface,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 18, 20, 6),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Show figures from',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 18, 20, 2),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Show figures from',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
                 ),
               ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.all_inclusive_rounded),
-              title: const Text('All POS systems'),
-              selected: scope.nodeId == null,
-              onTap: () => Navigator.of(sheetContext).pop(_allNodes),
-            ),
-            for (final node in scope.fleet.nodes)
-              ListTile(
-                leading: const Icon(Icons.point_of_sale_rounded),
-                title: Text(node.name),
-                subtitle: Text(_terminalSummary(scope.fleet, node)),
-                selected: scope.nodeId == node.id,
-                onTap: () => Navigator.of(sheetContext).pop(node.id),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Every figure, list and total follows this choice.',
+                    style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
+                  ),
+                ),
               ),
-            const SizedBox(height: 8),
-          ],
+              ListTile(
+                leading: const Icon(Icons.apartment_rounded),
+                title: Text(locations.length > 1 ? 'All shops together' : 'Whole business'),
+                subtitle: locations.length > 1
+                    ? Text('${locations.length} shops as one picture')
+                    : null,
+                selected: scope.locCode == null,
+                onTap: () => Navigator.of(sheetContext).pop(_wholeBusiness),
+              ),
+              for (final location in locations) ...[
+                ListTile(
+                  leading: const Icon(Icons.storefront_rounded),
+                  title: Text(location.name),
+                  subtitle: Text(location.subtitle),
+                  selected: scope.locCode == location.locCode && scope.macCode == null,
+                  onTap: () => Navigator.of(sheetContext).pop(location.locCode),
+                ),
+                for (final counter in location.counters)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 28),
+                    child: ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.point_of_sale_rounded, size: 20),
+                      title: Text(counter.name),
+                      subtitle: Text('${location.name} · this counter only'),
+                      selected: scope.locCode == location.locCode &&
+                          scope.macCode == counter.macCode,
+                      onTap: () => Navigator.of(sheetContext)
+                          .pop('${location.locCode}/${counter.macCode}'),
+                    ),
+                  ),
+              ],
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
     if (selected == null) return;
-    scope.selectNode(selected == _allNodes ? null : selected);
-  }
-
-  String _terminalSummary(MonitorFleet fleet, MonitorNode node) {
-    final tills = fleet.terminals.where((terminal) => terminal.nodeId == node.id);
-    if (tills.isEmpty) return 'No tills reported yet';
-    return tills.map((terminal) => terminal.label).join(' · ');
+    if (selected == _wholeBusiness) {
+      scope.selectPlace();
+      return;
+    }
+    final parts = selected.split('/');
+    scope.selectPlace(
+      locCode: parts.first,
+      macCode: parts.length > 1 ? parts[1] : null,
+    );
   }
 }
