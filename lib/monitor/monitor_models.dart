@@ -673,6 +673,78 @@ class MonitorInvoiceDetail {
   }
 }
 
+/// One cash movement, as the counter recorded it.
+class MonitorCashEntry {
+  const MonitorCashEntry({
+    required this.movementType,
+    required this.direction,
+    required this.amount,
+    required this.businessDate,
+    required this.shiftNo,
+    required this.movementNo,
+    required this.status,
+    this.reason,
+    this.referenceType,
+    this.locCode,
+    this.macCode,
+  });
+
+  final String movementType;
+  final String direction;
+  final double amount;
+  final String businessDate;
+  final int shiftNo;
+  final int movementNo;
+  final String status;
+  final String? reason;
+  final String? referenceType;
+  final String? locCode;
+  final String? macCode;
+
+  bool get isIn => direction == 'in';
+  bool get isVoid => status == 'void';
+
+  /// Where it happened: the counter, and which shift of that day.
+  String get whereText {
+    final terminal = [locCode, macCode].where((part) => part != null && part.isNotEmpty).join('/');
+    return [businessDate, if (terminal.isNotEmpty) terminal, if (shiftNo > 0) 'shift $shiftNo']
+        .join(' · ');
+  }
+
+  factory MonitorCashEntry.fromMap(Map<String, dynamic> map) => MonitorCashEntry(
+    movementType: _string(map['movementType'], 'unknown'),
+    direction: _string(map['direction'], 'in'),
+    amount: _money(map['amount']),
+    businessDate: _string(map['businessDate']),
+    shiftNo: _count(map['shiftNo']),
+    movementNo: _count(map['movementNo']),
+    status: _string(map['status'], 'active'),
+    reason: _nullableString(map['reason']),
+    referenceType: _nullableString(map['referenceType']),
+    locCode: _nullableString(map['locCode']),
+    macCode: _nullableString(map['macCode']),
+  );
+}
+
+/// A page of cash movements of one kind.
+class MonitorCashEntryPage {
+  const MonitorCashEntryPage({
+    required this.total,
+    required this.amount,
+    required this.rows,
+  });
+
+  final int total;
+  final double amount;
+  final List<MonitorCashEntry> rows;
+
+  factory MonitorCashEntryPage.fromMap(Map<String, dynamic> map) => MonitorCashEntryPage(
+    total: _count(map['total']),
+    amount: _money(map['amount']),
+    rows: _rows(map['rows']).map(MonitorCashEntry.fromMap).toList(),
+  );
+}
+
 /// A cashier's drawer session and how it reconciled.
 class MonitorShift {
   const MonitorShift({
@@ -739,6 +811,7 @@ class MonitorCash {
 /// What one customer still owes across all their unpaid bills.
 class MonitorReceivable {
   const MonitorReceivable({
+    this.accountId,
     required this.customerCode,
     required this.customerName,
     required this.invoiceCount,
@@ -747,6 +820,9 @@ class MonitorReceivable {
     this.customerMobile,
   });
 
+  /// The customer's account. Bills often carry no customer code, so this is
+  /// what actually tells one credit customer from another.
+  final String? accountId;
   final String customerCode;
   final String? customerName;
   final String? customerMobile;
@@ -758,8 +834,12 @@ class MonitorReceivable {
       ? customerName!
       : customerCode;
 
+  /// Bills with no account and no code: cash-counter sales left unpaid.
+  bool get isWalkIn => accountId == null && customerCode == 'Walk-in';
+
   factory MonitorReceivable.fromMap(Map<String, dynamic> map) =>
       MonitorReceivable(
+        accountId: _nullableString(map['accountId']),
         customerCode: _string(map['customerCode'], 'Walk-in'),
         customerName: map['customerName'] as String?,
         customerMobile: _nullableString(map['customerMobile']),

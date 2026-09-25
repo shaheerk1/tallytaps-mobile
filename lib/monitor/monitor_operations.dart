@@ -197,13 +197,26 @@ class _MovementsCard extends StatelessWidget {
       child: Column(
         children: [
           for (final movement in movements)
-            ComparisonBar(
-              label: _movementName(movement.label),
-              value: movement.total,
-              max: max,
-              amount: Money.format(movement.total),
-              hint: '${movement.count} entries',
-              tone: AppColors.cash,
+            InkWell(
+              onTap: () {
+                tapHaptic();
+                pushMonitorRoute(
+                  context,
+                  MonitorCashEntriesScreen(
+                    movementType: movement.label,
+                    title: _movementName(movement.label),
+                  ),
+                );
+              },
+              borderRadius: BorderRadius.circular(12),
+              child: ComparisonBar(
+                label: _movementName(movement.label),
+                value: movement.total,
+                max: max,
+                amount: Money.format(movement.total),
+                hint: '${movement.count} entries · tap to see them',
+                tone: AppColors.cash,
+              ),
             ),
         ],
       ),
@@ -225,6 +238,78 @@ class _MovementsCard extends StatelessWidget {
     'cash_out' => 'Other cash out',
     _ => prettyStatus(type),
   };
+}
+
+/// The movements behind one summarised reason on the cash page.
+class MonitorCashEntriesScreen extends StatelessWidget {
+  const MonitorCashEntriesScreen({
+    super.key,
+    required this.movementType,
+    required this.title,
+  });
+
+  final String movementType;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = context.watch<MonitorScope>();
+    final repository = context.read<MonitorRepository>();
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+        children: [
+          MonitorAsync<MonitorCashEntryPage>(
+            reloadKey: '${scope.key}|$movementType',
+            height: 260,
+            load: () => repository.cashMovements(scope, movementType),
+            builder: (context, page) {
+              if (page.rows.isEmpty) {
+                return MonitorCard(
+                  title: title,
+                  child: const MonitorEmpty(
+                    message: 'Nothing of this kind moved in this period.',
+                    icon: Icons.swap_vert_rounded,
+                  ),
+                );
+              }
+              return MonitorCard(
+                title: title,
+                subtitle: '${page.total} entr${page.total == 1 ? 'y' : 'ies'} · '
+                    '${Money.format(page.amount)} in total'
+                    '${page.rows.length < page.total ? ' · newest ${page.rows.length} shown' : ''}',
+                child: Column(
+                  children: [
+                    for (final entry in page.rows) ...[
+                      MonitorRow(
+                        title: entry.reason?.isNotEmpty == true
+                            ? entry.reason!
+                            : title,
+                        subtitle: entry.whereText,
+                        trailing:
+                            '${entry.isIn ? '+' : '−'} ${Money.format(entry.amount)}',
+                        trailingHint: entry.isVoid ? 'cancelled' : null,
+                        tone: entry.isVoid
+                            ? AppColors.inkFaint
+                            : entry.isIn
+                            ? AppColors.positive
+                            : AppColors.negative,
+                      ),
+                      if (entry != page.rows.last) monitorDivider,
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Item stock, received batches and goods received notes.
@@ -267,7 +352,6 @@ class _MonitorStockTabState extends State<MonitorStockTab> {
             segments: const [
               ButtonSegment(value: 0, label: Text('Items'), icon: Icon(Icons.inventory_2_outlined, size: 18)),
               ButtonSegment(value: 1, label: Text('Batches'), icon: Icon(Icons.layers_outlined, size: 18)),
-              ButtonSegment(value: 2, label: Text('Received'), icon: Icon(Icons.local_shipping_outlined, size: 18)),
             ],
             selected: {_view},
             showSelectedIcon: false,
@@ -319,11 +403,11 @@ class _MonitorStockTabState extends State<MonitorStockTab> {
                   builder: (context, lots) => _LotsCard(lots: lots),
                 )
               else
-                MonitorAsync<List<MonitorGrn>>(
+                MonitorAsync<List<MonitorLot>>(
                   reloadKey: scope.key,
                   height: 240,
-                  load: () => repository.goodsReceipts(scope),
-                  builder: (context, rows) => _GrnCard(rows: rows),
+                  load: () => repository.lots(scope),
+                  builder: (context, lots) => _LotsCard(lots: lots),
                 ),
             ],
           ),
@@ -468,49 +552,6 @@ class _LotsCard extends StatelessWidget {
   }
 }
 
-class _GrnCard extends StatelessWidget {
-  const _GrnCard({required this.rows});
-
-  final List<MonitorGrn> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    if (rows.isEmpty) {
-      return const MonitorCard(
-        title: 'Goods received',
-        child: MonitorEmpty(
-          message: 'No deliveries were recorded in this period.',
-          icon: Icons.local_shipping_outlined,
-        ),
-      );
-    }
-    return MonitorCard(
-      title: 'Goods received',
-      subtitle: '${rows.length} delivery note${rows.length == 1 ? '' : 's'}',
-      child: Column(
-        children: [
-          for (final grn in rows) ...[
-            MonitorRow(
-              leading: StatusPill(
-                label: prettyStatus(grn.status),
-                tone: statusTone(grn.status),
-              ),
-              title: grn.supplierName ?? grn.grnNumber,
-              subtitle: [
-                grn.grnNumber,
-                grn.businessDate,
-                if (grn.vehicleNo?.isNotEmpty == true) 'vehicle ${grn.vehicleNo}',
-              ].join(' · '),
-            ),
-            if (grn != rows.last) monitorDivider,
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// Who owes the business money, largest first.
 class MonitorReceivablesScreen extends StatelessWidget {
   const MonitorReceivablesScreen({super.key});
 
@@ -595,7 +636,7 @@ class MonitorCustomerBillsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final scope = context.watch<MonitorScope>();
     final repository = context.read<MonitorRepository>();
-    final isWalkIn = receivable.customerCode == 'Walk-in';
+    final isWalkIn = receivable.isWalkIn;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -610,10 +651,7 @@ class MonitorCustomerBillsScreen extends StatelessWidget {
           MonitorAsync<MonitorInvoicePage>(
             reloadKey: '${scope.placeKey}|${receivable.customerCode}',
             height: 260,
-            load: () => repository.customerInvoices(
-              scope,
-              isWalkIn ? null : receivable.customerCode,
-            ),
+            load: () => repository.customerInvoices(scope, receivable),
             builder: (context, page) {
               if (page.rows.isEmpty) {
                 return const MonitorCard(

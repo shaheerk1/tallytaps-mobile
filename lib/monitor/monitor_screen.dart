@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import 'monitor_bills.dart';
 import 'monitor_controller.dart';
 import 'monitor_operations.dart';
+import 'monitor_supply.dart';
 import 'monitor_overview.dart';
 
 /// The Business Monitor shell.
@@ -93,6 +94,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
               MonitorBillsTab(),
               MonitorCashTab(),
               MonitorStockTab(),
+              MonitorSupplyTab(),
             ],
           ),
           bottomNavigationBar: NavigationBar(
@@ -128,6 +130,11 @@ class _MonitorScreenState extends State<MonitorScreen> {
                 icon: Icon(Icons.inventory_2_outlined),
                 selectedIcon: Icon(Icons.inventory_2_rounded),
                 label: 'Stock',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.local_shipping_outlined),
+                selectedIcon: Icon(Icons.local_shipping_rounded),
+                label: 'Supply',
               ),
             ],
           ),

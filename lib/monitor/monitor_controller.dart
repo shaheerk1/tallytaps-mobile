@@ -4,6 +4,7 @@ import '../services/sync_config_service.dart';
 import '../services/sync_service.dart';
 import '../state/tally_store.dart';
 import 'monitor_models.dart';
+import 'monitor_supply_models.dart';
 
 /// The period and the place every monitor screen reads through.
 ///
@@ -223,18 +224,102 @@ class MonitorRepository {
   /// a balance owed is not a thing that happened on a particular day.
   Future<MonitorInvoicePage> customerInvoices(
     MonitorScope scope,
-    String? customerCode, {
+    MonitorReceivable customer, {
     int offset = 0,
   }) async => MonitorInvoicePage.fromMap(
     await _get(
       '/invoices',
       query: _node(scope, {
-        'customerCode': customerCode ?? '',
+        // The account tells customers apart; the code is only a fallback for
+        // older bills that were never linked to an account.
+        'customerAccountId': customer.accountId ?? '',
+        if (customer.accountId == null) 'customerCode': customer.isWalkIn ? '' : customer.customerCode,
         'outstandingOnly': 'true',
         'allDates': 'true',
         'returned': 'show',
         'offset': '$offset',
       }),
+    ),
+  );
+
+  /// Delivery notes over the chosen period. `status` is 'draft', 'posted', or
+  /// empty for both.
+  Future<List<MonitorGoodsReceipt>> goodsReceipts(
+    MonitorScope scope, {
+    String status = '',
+  }) async => parseRows(
+    await _get(
+      '/goods-receipts',
+      query: _scoped(scope, {if (status.isNotEmpty) 'status': status}),
+    ),
+    MonitorGoodsReceipt.fromMap,
+  );
+
+  Future<MonitorGoodsReceiptDetail> goodsReceipt(String nodeId, String grnId) async =>
+      MonitorGoodsReceiptDetail.fromMap(await _get('/grns/$nodeId/$grnId'));
+
+  /// Lots still holding stock. Dates are ignored: what is on the floor is on
+  /// the floor, whichever day it arrived.
+  Future<List<MonitorActiveLot>> activeLots(
+    MonitorScope scope, {
+    String query = '',
+    bool includeEmpty = false,
+  }) async => parseRows(
+    await _get(
+      '/lots/active',
+      query: _node(scope, {
+        if (query.isNotEmpty) 'q': query,
+        if (includeEmpty) 'includeEmpty': 'true',
+      }),
+    ),
+    MonitorActiveLot.fromMap,
+  );
+
+  /// Supplier statements over the period, or every date when asked.
+  Future<List<MonitorStatement>> statements(
+    MonitorScope scope, {
+    String status = '',
+    bool allDates = false,
+  }) async => parseRows(
+    await _get(
+      '/supplier-statements',
+      query: {
+        ...(allDates ? _node(scope) : _scoped(scope)),
+        if (status.isNotEmpty) 'status': status,
+        if (allDates) 'allDates': 'true',
+      },
+    ),
+    MonitorStatement.fromMap,
+  );
+
+  Future<MonitorStatementDetail> statement(String nodeId, String statementId) async =>
+      MonitorStatementDetail.fromMap(
+        await _get('/supplier-statements/$nodeId/$statementId'),
+      );
+
+  /// What each supplier is owed. Not tied to a date, like customer balances.
+  Future<List<MonitorSupplierAccount>> supplierAccounts(MonitorScope scope) async =>
+      parseRows(
+        await _get('/supplier-accounts', query: _node(scope)),
+        MonitorSupplierAccount.fromMap,
+      );
+
+  Future<MonitorAccountSheet> supplierAccountSheet(
+    MonitorScope scope,
+    String supplierId,
+  ) async => MonitorAccountSheet.fromMap(
+    await _get('/supplier-accounts/$supplierId', query: _node(scope)),
+  );
+
+  /// The individual movements behind one summarised reason on the cash page.
+  Future<MonitorCashEntryPage> cashMovements(
+    MonitorScope scope,
+    String movementType, {
+    int offset = 0,
+  }) async => MonitorCashEntryPage.fromMap(
+    await _get(
+      '/cash/movements',
+      query: _scoped(scope, {'movementType': movementType, 'offset': '$offset'}),
     ),
   );
 
@@ -271,9 +356,4 @@ class MonitorRepository {
     MonitorLot.fromMap,
   );
 
-  Future<List<MonitorGrn>> goodsReceipts(MonitorScope scope) async =>
-      parseRows(
-        await _get('/goods-receipts', query: _scoped(scope)),
-        MonitorGrn.fromMap,
-      );
 }
