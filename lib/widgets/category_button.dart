@@ -12,11 +12,15 @@ class CategoryButton extends StatelessWidget {
     required this.spec,
     required this.onTap,
     this.subtitle,
+    this.hasDraft = false,
   });
 
   final CategorySpec spec;
   final VoidCallback onTap;
   final String? subtitle;
+
+  /// Something was left half entered here, so the button says so.
+  final bool hasDraft;
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +57,18 @@ class CategoryButton extends StatelessWidget {
                 ),
                 child: Icon(spec.icon, color: Colors.white, size: 38),
               ),
+              if (hasDraft)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Unfinished',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      color: spec.color,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 8),
               Text(
                 spec.label,

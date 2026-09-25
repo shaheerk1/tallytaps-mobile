@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/action_repository.dart';
+import '../data/entry_draft_repository.dart';
 import '../data/billing_repository.dart';
 import '../models/mobile_bill.dart';
 import '../models/media_attachment.dart';
@@ -23,6 +24,20 @@ class TallyStore extends ChangeNotifier {
        _billingRepository = billingRepository ?? BillingRepository();
 
   final ActionRepository _repo;
+  final EntryDraftRepository _drafts = EntryDraftRepository();
+
+  Set<ActionType> _draftTypes = <ActionType>{};
+
+  /// Kinds of record with something half entered, marked on the home buttons.
+  Set<ActionType> get draftTypes => _draftTypes;
+
+  /// Re-reads which entries are unfinished, after leaving an entry screen.
+  Future<void> refreshDrafts() async {
+    final types = await _drafts.pendingTypes();
+    if (types.length == _draftTypes.length && types.containsAll(_draftTypes)) return;
+    _draftTypes = types;
+    notifyListeners();
+  }
   final SyncService _syncService;
   final BillingRepository _billingRepository;
 
@@ -83,6 +98,7 @@ class TallyStore extends ChangeNotifier {
     _connection = await _syncService.loadConnection();
     _pendingBillCount = await _billingRepository.pendingCount();
     _mobileBills = await _billingRepository.bills();
+    _draftTypes = await _drafts.pendingTypes();
     _loading = false;
     notifyListeners();
     if (isConnected && unsynced.isNotEmpty) {

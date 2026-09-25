@@ -219,6 +219,25 @@ class MonitorRepository {
   Future<MonitorCash> cash(MonitorScope scope) async =>
       MonitorCash.fromMap(await _get('/cash', query: _scoped(scope)));
 
+  /// The bills behind what one customer owes. Dates are ignored on purpose:
+  /// a balance owed is not a thing that happened on a particular day.
+  Future<MonitorInvoicePage> customerInvoices(
+    MonitorScope scope,
+    String? customerCode, {
+    int offset = 0,
+  }) async => MonitorInvoicePage.fromMap(
+    await _get(
+      '/invoices',
+      query: _node(scope, {
+        'customerCode': customerCode ?? '',
+        'outstandingOnly': 'true',
+        'allDates': 'true',
+        'returned': 'show',
+        'offset': '$offset',
+      }),
+    ),
+  );
+
   Future<List<MonitorReceivable>> receivables(MonitorScope scope) async =>
       parseRows(
         await _get('/receivables', query: _node(scope)),

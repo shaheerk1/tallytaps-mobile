@@ -60,9 +60,14 @@ class HomeScreen extends StatelessWidget {
               onBill: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const MobileBillingScreen()),
               ),
-              onCategory: (type) => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => EntryScreen(type: type)),
-              ),
+              // Coming back from an entry screen refreshes the unfinished marks.
+              onCategory: (type) async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => EntryScreen(type: type)),
+                );
+                await store.refreshDrafts();
+              },
+              draftTypes: store.draftTypes,
             ),
           ],
         ),
@@ -625,10 +630,17 @@ class _SuccessBannerState extends State<_SuccessBanner>
 // The bottom dock of big category buttons
 // ---------------------------------------------------------------------------
 class _Dock extends StatelessWidget {
-  const _Dock({required this.onCategory, required this.onBill});
+  const _Dock({
+    required this.onCategory,
+    required this.onBill,
+    this.draftTypes = const <ActionType>{},
+  });
 
   final ValueChanged<ActionType> onCategory;
   final VoidCallback onBill;
+
+  /// Kinds of record with an unfinished entry waiting.
+  final Set<ActionType> draftTypes;
 
   @override
   Widget build(BuildContext context) {
@@ -697,6 +709,7 @@ class _Dock extends StatelessWidget {
                   CategoryButton(
                     spec: spec,
                     subtitle: spec.badge,
+                    hasDraft: draftTypes.contains(spec.type),
                     onTap: () => onCategory(spec.type),
                   ),
               ],

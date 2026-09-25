@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/entry_draft_repository.dart';
 import '../models/category_spec.dart';
 import '../models/tally_action.dart';
 import '../services/media_service.dart';
@@ -50,12 +51,98 @@ class _EntryScreenState extends State<EntryScreen> {
   final List<String> _images = [];
   bool _saving = false;
 
+  // An entry half typed is still worth keeping: leaving the screen, or the
+  // phone closing the app, must not throw it away.
+  final EntryDraftRepository _drafts = EntryDraftRepository();
+  Timer? _draftTimer;
+  bool _draftRestored = false;
+  bool _recorded = false;
+
   double get _amount => Money.parseInput(_input);
   double get _stockQty => Money.parseInput(_qtyInput);
   double get _stockPrice => Money.parseInput(_priceInput);
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(_restoreDraft());
+  }
+
+  /// Puts back whatever was left unfinished on this screen last time.
+  Future<void> _restoreDraft() async {
+    final draft = await _drafts.load(widget.type);
+    if (draft == null || !mounted) return;
+    setState(() {
+      _direction = draft.direction;
+      _input = draft.input;
+      _noteController.text = draft.note;
+      _selectedItem = draft.item;
+      _qtyInput = draft.qtyInput;
+      _priceInput = draft.priceInput;
+      _stockMode = draft.stockPriceMode
+          ? _StockInputMode.price
+          : _StockInputMode.qty;
+      _unit = draft.unit;
+      _voicePath = draft.voicePath;
+      _images
+        ..clear()
+        ..addAll(draft.imagePaths.where((path) => File(path).existsSync()));
+      _draftRestored = true;
+    });
+  }
+
+  EntryDraft _currentDraft() => EntryDraft(
+    type: widget.type,
+    direction: _direction,
+    input: _input,
+    note: _noteController.text,
+    item: _selectedItem,
+    qtyInput: _qtyInput,
+    priceInput: _priceInput,
+    stockPriceMode: _stockMode == _StockInputMode.price,
+    unit: _unit,
+    voicePath: _voicePath,
+    imagePaths: List<String>.from(_images),
+    updatedAt: DateTime.now(),
+  );
+
+  /// Saved a moment after typing stops, so the pad stays quick under the thumb.
+  void _queueDraftSave() {
+    if (_recorded) return;
+    _draftTimer?.cancel();
+    _draftTimer = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_drafts.save(_currentDraft()));
+    });
+  }
+
+  /// Throws the unfinished entry away, after the person asks for that.
+  Future<void> _discardDraft() async {
+    _draftTimer?.cancel();
+    await _drafts.clear(widget.type);
+    if (!mounted) return;
+    setState(() {
+      _input = '';
+      _noteController.clear();
+      _selectedItem = null;
+      _qtyInput = '';
+      _priceInput = '';
+      _voicePath = null;
+      _images.clear();
+      _draftRestored = false;
+    });
+  }
+
+  @override
+  void deactivate() {
+    // Leaving the screen, by the back button or any other way, keeps the entry.
+    _draftTimer?.cancel();
+    if (!_recorded) unawaited(_drafts.save(_currentDraft()));
+    super.deactivate();
+  }
+
+  @override
   void dispose() {
+    _draftTimer?.cancel();
     _recordingTicker?.cancel();
     _voiceRecorder.dispose();
     _noteController.dispose();
@@ -75,6 +162,7 @@ class _EntryScreenState extends State<EntryScreen> {
   }
 
   void _onDigit(String key) {
+    _queueDraftSave();
     setState(() {
       if (widget.type == ActionType.stock) {
         if (_stockMode == _StockInputMode.qty) {
@@ -89,6 +177,7 @@ class _EntryScreenState extends State<EntryScreen> {
   }
 
   void _onBackspace() {
+    _queueDraftSave();
     setState(() {
       if (widget.type == ActionType.stock) {
         if (_stockMode == _StockInputMode.qty) {
@@ -106,6 +195,7 @@ class _EntryScreenState extends State<EntryScreen> {
   }
 
   void _clearActiveInput() {
+    _queueDraftSave();
     setState(() {
       if (widget.type == ActionType.stock) {
         if (_stockMode == _StockInputMode.qty) {
@@ -128,6 +218,7 @@ class _EntryScreenState extends State<EntryScreen> {
     );
     if (name != null && mounted) {
       setState(() => _selectedItem = name);
+      _queueDraftSave();
     }
   }
 
@@ -140,6 +231,7 @@ class _EntryScreenState extends State<EntryScreen> {
           _isRecording = false;
           if (path != null) _voicePath = path;
         });
+        _queueDraftSave();
       }
       return;
     }
@@ -162,16 +254,24 @@ class _EntryScreenState extends State<EntryScreen> {
 
   Future<void> _addCameraPhoto() async {
     final path = await MediaService.capturePhoto();
-    if (path != null && mounted) setState(() => _images.add(path));
+    if (path != null && mounted) {
+      setState(() => _images.add(path));
+      _queueDraftSave();
+    }
   }
 
   Future<void> _addGalleryImage() async {
     final path = await MediaService.pickGallery();
-    if (path != null && mounted) setState(() => _images.add(path));
+    if (path != null && mounted) {
+      setState(() => _images.add(path));
+      _queueDraftSave();
+    }
   }
 
-  void _removeImage(String path) =>
-      setState(() => _images.removeWhere((p) => p == path));
+  void _removeImage(String path) {
+    setState(() => _images.removeWhere((p) => p == path));
+    _queueDraftSave();
+  }
 
   Future<void> _record() async {
     if (_saving) return;
@@ -231,6 +331,9 @@ class _EntryScreenState extends State<EntryScreen> {
         imagePaths: _images,
       );
     }
+    _recorded = true;
+    _draftTimer?.cancel();
+    await _drafts.clear(widget.type);
     if (!mounted) return;
     successHaptic();
     // Straight back home so the next action can be recorded right away.
@@ -260,10 +363,11 @@ class _EntryScreenState extends State<EntryScreen> {
     return Column(
       children: [
         _Header(spec: _spec, onBack: () => Navigator.of(context).maybePop()),
+        if (_draftRestored) _draftBanner(),
         _DirectionToggle(
           spec: _spec,
           value: _direction,
-          onChanged: (d) => setState(() => _direction = d),
+          onChanged: (d) { setState(() => _direction = d); _queueDraftSave(); },
         ),
         Flexible(
           fit: FlexFit.loose,
@@ -303,17 +407,18 @@ class _EntryScreenState extends State<EntryScreen> {
                   spec: _spec,
                   onBack: () => Navigator.of(context).maybePop(),
                 ),
+                if (_draftRestored) _draftBanner(),
                 _DirectionToggle(
                   spec: _spec,
                   value: _direction,
-                  onChanged: (d) => setState(() => _direction = d),
+                  onChanged: (d) { setState(() => _direction = d); _queueDraftSave(); },
                 ),
                 _ItemSelector(selected: _selectedItem, onTap: _pickItem),
                 _StockModeToggle(
                   mode: _stockMode,
                   unit: _unit,
-                  onModeChanged: (m) => setState(() => _stockMode = m),
-                  onUnitChanged: (u) => setState(() => _unit = u),
+                  onModeChanged: (m) { setState(() => _stockMode = m); _queueDraftSave(); },
+                  onUnitChanged: (u) { setState(() => _unit = u); _queueDraftSave(); },
                 ),
                 const SizedBox(height: 4),
                 _AmountDisplay(
@@ -345,6 +450,7 @@ class _EntryScreenState extends State<EntryScreen> {
     return Column(
       children: [
         _Header(spec: _spec, onBack: () => Navigator.of(context).maybePop()),
+        if (_draftRestored) _draftBanner(),
         const Padding(
           padding: EdgeInsets.fromLTRB(24, 10, 24, 4),
           child: Align(
@@ -400,9 +506,46 @@ class _EntryScreenState extends State<EntryScreen> {
     );
   }
 
+  /// Says plainly that an unfinished entry was put back, and offers to drop it.
+  Widget _draftBanner() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.history, size: 18, color: AppColors.inkSoft),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Picked up where you left off',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: AppColors.inkSoft,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: _discardDraft,
+            child: const Text(
+              'Start fresh',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _noteField({required String hint}) {
     return TextField(
       controller: _noteController,
+      onChanged: (_) => _queueDraftSave(),
       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
       decoration: InputDecoration(
         hintText: hint,

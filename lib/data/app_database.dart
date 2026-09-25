@@ -8,7 +8,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'tally.db';
-  static const _dbVersion = 4;
+  static const _dbVersion = 5;
 
   Database? _db;
 
@@ -31,6 +31,7 @@ class AppDatabase {
     await _createActions(db);
     await _createItems(db);
     await _createBilling(db);
+    await _createEntryDrafts(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -48,6 +49,7 @@ class AppDatabase {
       await db.execute('ALTER TABLE actions ADD COLUMN media_assets TEXT');
     }
     if (oldVersion < 4) await _createBilling(db);
+    if (oldVersion < 5) await _createEntryDrafts(db);
   }
 
   Future<void> _createActions(Database db) async {
@@ -86,6 +88,26 @@ class AppDatabase {
         'name': name,
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
+  }
+
+  /// One unfinished entry per kind of record, so leaving a screen loses nothing.
+  Future<void> _createEntryDrafts(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS entry_drafts (
+        type            TEXT PRIMARY KEY,
+        direction       TEXT NOT NULL,
+        input           TEXT,
+        note            TEXT,
+        item            TEXT,
+        qty_input       TEXT,
+        price_input     TEXT,
+        stock_price_mode INTEGER NOT NULL DEFAULT 0,
+        unit            TEXT,
+        voice_path      TEXT,
+        image_paths     TEXT,
+        updated_at      INTEGER NOT NULL
+      )
+    ''');
   }
 
   Future<void> _createBilling(Database db) async {

@@ -188,31 +188,49 @@ class _MonitorBillsTabState extends State<MonitorBillsTab> {
                   setState(() => _returned = value ? 'show' : 'hide');
                 },
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
+              // Big money on a narrow phone must wrap, not run off the edge.
               if (!_loading)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '${_page.total} bill${_page.total == 1 ? '' : 's'}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.inkFaint,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        '${_page.total} bill${_page.total == 1 ? '' : 's'}',
+                        textAlign: TextAlign.end,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.inkFaint,
+                        ),
                       ),
-                    ),
-                    Text(
-                      _page.hasReturns
-                          ? '${Money.format(_page.netTotal)} net · '
-                                '${Money.format(_page.returnedTotal)} returned'
-                          : '${Money.format(_page.netTotal)} net',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.ink,
+                      Text(
+                        '${Money.format(_page.netTotal)} net',
+                        textAlign: TextAlign.end,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.ink,
+                        ),
                       ),
-                    ),
-                  ],
+                      if (_page.hasReturns)
+                        Text(
+                          '${Money.format(_page.returnedTotal)} returned',
+                          textAlign: TextAlign.end,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.negative,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
             ],
           ),
@@ -394,6 +412,28 @@ class MonitorInvoiceScreen extends StatelessWidget {
                     amount: Money.format(detail.invoice.grandTotal),
                     bold: true,
                   ),
+                  // A returned bill has to explain the gap between what it was
+                  // worth and what is now owed on it.
+                  for (final refund in detail.refunds)
+                    AmountRow(
+                      label: 'Returned ${refund.txnDate}',
+                      hint: [
+                        'goods ${Money.format(refund.merchandiseTotal)}',
+                        if (refund.bagChargeTotal > 0)
+                          'packaging ${Money.format(refund.bagChargeTotal)}',
+                        if (refund.wageChargeTotal > 0)
+                          'wage ${Money.format(refund.wageChargeTotal)}',
+                        if (refund.reason != null && refund.reason!.isNotEmpty) refund.reason!,
+                      ].join(' · '),
+                      amount: '− ${Money.format(refund.grandTotal)}',
+                      tone: AppColors.negative,
+                    ),
+                  if (detail.returnedTotal > 0)
+                    AmountRow(
+                      label: 'Net after returns',
+                      amount: Money.format(detail.netAfterReturns),
+                      bold: true,
+                    ),
                   AmountRow(
                     label: 'Paid',
                     amount: Money.format(detail.invoice.paidTotal),
@@ -424,6 +464,39 @@ class MonitorInvoiceScreen extends StatelessWidget {
                       ],
                     ),
             ),
+            if (detail.refunds.isNotEmpty)
+              MonitorCard(
+                title: 'Returned items',
+                subtitle: '${detail.refunds.length} return'
+                    '${detail.refunds.length == 1 ? '' : 's'} against this bill',
+                child: Column(
+                  children: [
+                    for (final refund in detail.refunds)
+                      for (final line in refund.lines) ...[
+                        AmountRow(
+                          label: line.description,
+                          hint: [
+                            measureText(
+                              handlingQty: line.handlingQty,
+                              handlingUom: line.handlingUom,
+                              baseQty: line.baseQty,
+                              baseUom: line.baseUom,
+                            ),
+                            'goods ${Money.format(line.merchandiseTotal)}',
+                            if (line.bagChargeTotal > 0)
+                              'packaging ${Money.format(line.bagChargeTotal)}',
+                            if (line.wageChargeTotal > 0)
+                              'wage ${Money.format(line.wageChargeTotal)}',
+                          ].join(' · '),
+                          amount: '− ${Money.format(line.total)}',
+                          tone: AppColors.negative,
+                        ),
+                        if (!(refund == detail.refunds.last && line == refund.lines.last))
+                          monitorDivider,
+                      ],
+                  ],
+                ),
+              ),
             MonitorCard(
               title: 'Settlement',
               child: detail.payments.isEmpty

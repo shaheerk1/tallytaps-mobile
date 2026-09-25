@@ -549,6 +549,83 @@ class MonitorInvoicePayment {
       );
 }
 
+/// One line that came back on a return, in the measures it was sold in.
+class MonitorRefundLine {
+  const MonitorRefundLine({
+    required this.description,
+    required this.itemCode,
+    required this.handlingQty,
+    required this.handlingUom,
+    required this.baseQty,
+    required this.baseUom,
+    required this.merchandiseTotal,
+    required this.bagChargeTotal,
+    required this.wageChargeTotal,
+    required this.total,
+  });
+
+  final String description;
+  final String itemCode;
+  final double handlingQty;
+  final String handlingUom;
+  final double? baseQty;
+  final String? baseUom;
+  final double merchandiseTotal;
+  final double bagChargeTotal;
+  final double wageChargeTotal;
+  final double total;
+
+  factory MonitorRefundLine.fromMap(Map<String, dynamic> map) => MonitorRefundLine(
+        description: _string(map['description'], 'Item'),
+        itemCode: _string(map['itemCode']),
+        handlingQty: _money(map['handlingQty']),
+        handlingUom: _string(map['handlingUom'], 'qty'),
+        baseQty: _optional(map['baseQty']),
+        baseUom: map['baseUom'] as String?,
+        merchandiseTotal: _money(map['merchandiseTotal']),
+        bagChargeTotal: _money(map['bagChargeTotal']),
+        wageChargeTotal: _money(map['wageChargeTotal']),
+        total: _money(map['total']),
+      );
+}
+
+/// A return against a bill: what went back and how much of it was charges.
+class MonitorRefund {
+  const MonitorRefund({
+    required this.refundNumber,
+    required this.txnDate,
+    required this.reason,
+    required this.merchandiseTotal,
+    required this.bagChargeTotal,
+    required this.wageChargeTotal,
+    required this.grandTotal,
+    required this.refundedCash,
+    required this.lines,
+  });
+
+  final String refundNumber;
+  final String txnDate;
+  final String? reason;
+  final double merchandiseTotal;
+  final double bagChargeTotal;
+  final double wageChargeTotal;
+  final double grandTotal;
+  final double refundedCash;
+  final List<MonitorRefundLine> lines;
+
+  factory MonitorRefund.fromMap(Map<String, dynamic> map) => MonitorRefund(
+        refundNumber: _string(map['refundNumber'], 'Return'),
+        txnDate: _string(map['txnDate']),
+        reason: map['reason'] as String?,
+        merchandiseTotal: _money(map['merchandiseTotal']),
+        bagChargeTotal: _money(map['bagChargeTotal']),
+        wageChargeTotal: _money(map['wageChargeTotal']),
+        grandTotal: _money(map['grandTotal']),
+        refundedCash: _money(map['refundedCash']),
+        lines: _rows(map['lines']).map(MonitorRefundLine.fromMap).toList(),
+      );
+}
+
 class MonitorInvoiceDetail {
   const MonitorInvoiceDetail({
     required this.invoice,
@@ -559,16 +636,25 @@ class MonitorInvoiceDetail {
     required this.bagChargeTotal,
     required this.wageChargeTotal,
     required this.changeAmt,
+    required this.refunds,
   });
 
   final MonitorInvoice invoice;
   final List<MonitorInvoiceLine> lines;
   final List<MonitorInvoicePayment> payments;
+  final List<MonitorRefund> refunds;
   final double subtotal;
   final double discountTotal;
   final double bagChargeTotal;
   final double wageChargeTotal;
   final double changeAmt;
+
+  /// Everything handed back against this bill.
+  double get returnedTotal =>
+      refunds.fold<double>(0, (sum, refund) => sum + refund.grandTotal);
+
+  /// What the bill is worth once the returns are taken off.
+  double get netAfterReturns => invoice.grandTotal - returnedTotal;
 
   factory MonitorInvoiceDetail.fromMap(Map<String, dynamic> map) {
     final invoice = _map(map['invoice']);
@@ -582,6 +668,7 @@ class MonitorInvoiceDetail {
       bagChargeTotal: _money(invoice['bagChargeTotal']),
       wageChargeTotal: _money(invoice['wageChargeTotal']),
       changeAmt: _money(invoice['changeAmt']),
+      refunds: _rows(map['refunds']).map(MonitorRefund.fromMap).toList(),
     );
   }
 }

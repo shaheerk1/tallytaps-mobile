@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import 'monitor_bills.dart';
 import 'monitor_controller.dart';
 import 'monitor_models.dart';
 import 'monitor_widgets.dart';
@@ -566,8 +567,92 @@ class MonitorReceivablesScreen extends StatelessWidget {
                                 customerName: row.title,
                                 mobile: row.customerMobile!,
                               ),
+                        onTap: () => pushMonitorRoute(
+                          context,
+                          MonitorCustomerBillsScreen(receivable: row),
+                        ),
                       ),
                       if (row != rows.last) monitorDivider,
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The unpaid bills behind one customer's balance, each opening the bill.
+class MonitorCustomerBillsScreen extends StatelessWidget {
+  const MonitorCustomerBillsScreen({super.key, required this.receivable});
+
+  final MonitorReceivable receivable;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = context.watch<MonitorScope>();
+    final repository = context.read<MonitorRepository>();
+    final isWalkIn = receivable.customerCode == 'Walk-in';
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        title: Text(
+          receivable.title,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+        children: [
+          MonitorAsync<MonitorInvoicePage>(
+            reloadKey: '${scope.placeKey}|${receivable.customerCode}',
+            height: 260,
+            load: () => repository.customerInvoices(
+              scope,
+              isWalkIn ? null : receivable.customerCode,
+            ),
+            builder: (context, page) {
+              if (page.rows.isEmpty) {
+                return const MonitorCard(
+                  title: 'Unpaid bills',
+                  child: MonitorEmpty(
+                    message: 'Nothing is unpaid here now.',
+                    icon: Icons.verified_outlined,
+                  ),
+                );
+              }
+              return MonitorCard(
+                title: 'Unpaid bills',
+                subtitle: '${Money.format(receivable.balance)} owed · '
+                    'oldest ${receivable.oldest}'
+                    '${isWalkIn ? ' · bills with no customer code' : ''}',
+                child: Column(
+                  children: [
+                    for (final invoice in page.rows) ...[
+                      MonitorRow(
+                        leading: StatusPill(
+                          label: prettyStatus(invoice.status),
+                          tone: statusTone(invoice.status),
+                        ),
+                        title: invoice.invoiceNumber,
+                        subtitle: '${invoice.businessDate} · ${invoice.terminal}'
+                            ' · bill ${Money.format(invoice.netTotal)}',
+                        trailing: Money.format(invoice.balance),
+                        trailingHint: 'unpaid',
+                        tone: AppColors.stock,
+                        onTap: () => pushMonitorRoute(
+                          context,
+                          MonitorInvoiceScreen(
+                            nodeId: invoice.nodeId,
+                            invoiceId: invoice.invoiceId,
+                            title: invoice.invoiceNumber,
+                          ),
+                        ),
+                      ),
+                      if (invoice != page.rows.last) monitorDivider,
                     ],
                   ],
                 ),
