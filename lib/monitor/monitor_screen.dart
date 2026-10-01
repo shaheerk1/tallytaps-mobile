@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import 'monitor_bills.dart';
 import 'monitor_controller.dart';
 import 'monitor_operations.dart';
+import 'monitor_place_picker.dart';
 import 'monitor_supply.dart';
 import 'monitor_overview.dart';
 
@@ -15,7 +16,11 @@ import 'monitor_overview.dart';
 /// Owns the period and terminal filters that every tab reads, and closes the
 /// whole section the moment the host withdraws this device's access.
 class MonitorScreen extends StatefulWidget {
-  const MonitorScreen({super.key});
+  const MonitorScreen({super.key, this.embedded = false});
+
+  /// Shown as a tab inside the app rather than opened on its own, so it drops
+  /// its title bar and its way back.
+  final bool embedded;
 
   @override
   State<MonitorScreen> createState() => _MonitorScreenState();
@@ -76,16 +81,21 @@ class _MonitorScreenState extends State<MonitorScreen> {
         value: _repository,
         child: Scaffold(
           backgroundColor: AppColors.background,
-          appBar: AppBar(
-            title: const Text(
-              'Business Monitor',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            bottom: const PreferredSize(
-              preferredSize: Size.fromHeight(56),
-              child: _FilterBar(),
-            ),
-          ),
+          appBar: widget.embedded
+              ? const PreferredSize(
+                  preferredSize: Size.fromHeight(56),
+                  child: SafeArea(bottom: false, child: _FilterBar()),
+                )
+              : AppBar(
+                  title: const Text(
+                    'Business Monitor',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  bottom: const PreferredSize(
+                    preferredSize: Size.fromHeight(56),
+                    child: _FilterBar(),
+                  ),
+                ),
           body: IndexedStack(
             index: _tab,
             children: const [
@@ -194,7 +204,7 @@ class _FilterBar extends StatelessWidget {
                   size: 17,
                 ),
                 label: Text(scope.placeLabel),
-                onPressed: () => _pickPlace(context, scope),
+                onPressed: () => showPlacePicker(context, scope),
               ),
             ),
         ],
@@ -213,96 +223,5 @@ class _FilterBar extends StatelessWidget {
     if (picked != null) scope.applyCustom(picked.start, picked.end);
   }
 
-  /// Dismissing the sheet must leave the filter alone, so "everything" travels
-  /// as an explicit sentinel rather than as null.
-  static const _wholeBusiness = '__all__';
-
-  /// Whole business, one shop, or one counter inside a shop.
-  ///
-  /// Shops are how the business is really divided, so they lead. Counters are
-  /// offered underneath the shop they belong to, for the owner who wants to see
-  /// what one till did.
-  Future<void> _pickPlace(BuildContext context, MonitorScope scope) async {
-    final locations = scope.fleet.locations;
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: AppColors.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 18, 20, 2),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Show figures from',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                  ),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Every figure, list and total follows this choice.',
-                    style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
-                  ),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.apartment_rounded),
-                title: Text(locations.length > 1 ? 'All shops together' : 'Whole business'),
-                subtitle: locations.length > 1
-                    ? Text('${locations.length} shops as one picture')
-                    : null,
-                selected: scope.locCode == null,
-                onTap: () => Navigator.of(sheetContext).pop(_wholeBusiness),
-              ),
-              for (final location in locations) ...[
-                ListTile(
-                  leading: const Icon(Icons.storefront_rounded),
-                  title: Text(location.name),
-                  subtitle: Text(location.subtitle),
-                  selected: scope.locCode == location.locCode && scope.macCode == null,
-                  onTap: () => Navigator.of(sheetContext).pop(location.locCode),
-                ),
-                for (final counter in location.counters)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 28),
-                    child: ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.point_of_sale_rounded, size: 20),
-                      title: Text(counter.name),
-                      subtitle: Text('${location.name} · this counter only'),
-                      selected: scope.locCode == location.locCode &&
-                          scope.macCode == counter.macCode,
-                      onTap: () => Navigator.of(sheetContext)
-                          .pop('${location.locCode}/${counter.macCode}'),
-                    ),
-                  ),
-              ],
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (selected == null) return;
-    if (selected == _wholeBusiness) {
-      scope.selectPlace();
-      return;
-    }
-    final parts = selected.split('/');
-    scope.selectPlace(
-      locCode: parts.first,
-      macCode: parts.length > 1 ? parts[1] : null,
-    );
-  }
 }
+

@@ -16,6 +16,14 @@ class ActionRepository {
     return rows.map(TallyAction.fromMap).toList();
   }
 
+  /// Saves what has been written so far onto the same note.
+  Future<int> update(TallyAction action) async {
+    if (action.id == null) return 0;
+    final db = await AppDatabase.instance.database;
+    final values = action.toMap()..remove('id');
+    return db.update('actions', values, where: 'id = ?', whereArgs: [action.id]);
+  }
+
   Future<int> delete(int id) async {
     final db = await AppDatabase.instance.database;
     return db.delete('actions', where: 'id = ?', whereArgs: [id]);
@@ -26,6 +34,17 @@ class ActionRepository {
     return db.update(
       'actions',
       {'synced': 1, 'synced_at': syncedAt.millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Marks a note as seen to at the shop.
+  Future<int> markResolved(int id, DateTime resolvedAt, String? resolvedBy) async {
+    final db = await AppDatabase.instance.database;
+    return db.update(
+      'actions',
+      {'resolved_at': resolvedAt.millisecondsSinceEpoch, 'resolved_by': resolvedBy},
       where: 'id = ?',
       whereArgs: [id],
     );

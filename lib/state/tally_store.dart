@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/action_repository.dart';
-import '../data/entry_draft_repository.dart';
 import '../data/billing_repository.dart';
 import '../models/mobile_bill.dart';
 import '../models/media_attachment.dart';
@@ -24,20 +23,6 @@ class TallyStore extends ChangeNotifier {
        _billingRepository = billingRepository ?? BillingRepository();
 
   final ActionRepository _repo;
-  final EntryDraftRepository _drafts = EntryDraftRepository();
-
-  Set<ActionType> _draftTypes = <ActionType>{};
-
-  /// Kinds of record with something half entered, marked on the home buttons.
-  Set<ActionType> get draftTypes => _draftTypes;
-
-  /// Re-reads which entries are unfinished, after leaving an entry screen.
-  Future<void> refreshDrafts() async {
-    final types = await _drafts.pendingTypes();
-    if (types.length == _draftTypes.length && types.containsAll(_draftTypes)) return;
-    _draftTypes = types;
-    notifyListeners();
-  }
   final SyncService _syncService;
   final BillingRepository _billingRepository;
 
@@ -74,7 +59,14 @@ class TallyStore extends ChangeNotifier {
   /// Bumped on every change so widgets can replay the success animation.
   int get lastRecordedNonce => _lastRecordedNonce;
 
-  List<TallyAction> get unsynced => _actions.where((a) => !a.synced).toList();
+  List<TallyAction> get unsynced =>
+      _actions.where((a) => a.isFinal && !a.synced).toList();
+
+  /// Notes still being written. They stay on the phone, as many as there are.
+  List<TallyAction> get drafts => _actions.where((a) => a.isDraft).toList();
+
+  /// Finished notes, which are the ones the shop ever sees.
+  List<TallyAction> get finalNotes => _actions.where((a) => a.isFinal).toList();
 
   /// Money actions created today, newest first. Stock is excluded — its
   /// amount is the item price, not cash received/paid.
@@ -98,7 +90,6 @@ class TallyStore extends ChangeNotifier {
     _connection = await _syncService.loadConnection();
     _pendingBillCount = await _billingRepository.pendingCount();
     _mobileBills = await _billingRepository.bills();
-    _draftTypes = await _drafts.pendingTypes();
     _loading = false;
     notifyListeners();
     if (isConnected && unsynced.isNotEmpty) {
@@ -136,6 +127,127 @@ class TallyStore extends ChangeNotifier {
     await _syncService.saveConnection(updated);
     _connection = updated;
     notifyListeners();
+  }
+
+  /// Starts a new note. It is kept from the first word, like any notebook,
+  /// and stays a draft until the person says it is finished.
+  Future<TallyAction> startDraft() async {
+    final action = TallyAction(
+      type: ActionType.note,
+      direction: ActionDirection.incoming,
+      amount: 0,
+      isDraft: true,
+      createdAt: DateTime.now(),
+    );
+    action.id = await _repo.insert(action);
+    _actions.insert(0, action);
+    notifyListeners();
+    return action;
+  }
+
+  /// Saves what has been written so far. An empty note is dropped instead of
+  /// cluttering the list.
+  Future<TallyAction?> saveDraft(TallyAction draft) async {
+    if (draft.id == null) return null;
+    if (!draft.hasContent) {
+      await deleteNote(draft);
+      return null;
+    }
+    await _repo.update(draft);
+    final index = _actions.indexWhere((action) => action.id == draft.id);
+    if (index >= 0) _actions[index] = draft;
+    notifyListeners();
+    return draft;
+  }
+
+  /// Marks a note finished: it stops being editable and joins the queue for
+  /// the shop. What it is filed as follows what was attached to it.
+  Future<TallyAction?> finalizeNote(TallyAction draft) async {
+    if (draft.id == null || !draft.hasContent) return null;
+    final finished = draft.copyWith(isDraft: false, type: _fileAs(draft));
+    await _repo.update(finished);
+    final index = _actions.indexWhere((action) => action.id == finished.id);
+    if (index >= 0) _actions[index] = finished;
+    _lastRecorded = finished;
+    _lastRecordedNonce++;
+    notifyListeners();
+    if (isConnected) unawaited(syncPending());
+    return finished;
+  }
+
+  /// A note is filed by what is on it, never by a category chosen up front.
+  ActionType _fileAs(TallyAction note) {
+    if (note.hasMoney) {
+      return note.moneyMethod == 'card' ? ActionType.card : ActionType.cash;
+    }
+    return note.hasGoods ? ActionType.stock : ActionType.note;
+  }
+
+  /// Throws a note away. A finished one that already reached the shop stays
+  /// there; this only clears it from the phone.
+  Future<void> deleteNote(TallyAction note) async {
+    if (note.id != null) await _repo.delete(note.id!);
+    _actions.removeWhere((action) => action.id == note.id);
+    notifyListeners();
+  }
+
+  /// One field note, as the person wrote it.
+  ///
+  /// They never pick a category: the note is filed by what they attached, so
+  /// the shop's own lists and money totals keep working, and a plain note stays
+  /// a plain note.
+  Future<TallyAction> recordNote({
+    required String note,
+    double? amount,
+    String moneyMethod = 'cash',
+    ActionDirection moneyDirection = ActionDirection.incoming,
+    String? item,
+    String? productKey,
+    double? handlingQty,
+    String? handlingUom,
+    double? baseQty,
+    String? baseUom,
+    String? who,
+    List<String> tags = const [],
+    bool needsDoing = false,
+    String? voicePath,
+    List<String> imagePaths = const [],
+  }) async {
+    final hasMoney = amount != null && amount > 0;
+    final hasGoods = item != null && item.trim().isNotEmpty;
+    final type = hasMoney
+        ? (moneyMethod == 'card' ? ActionType.card : ActionType.cash)
+        : hasGoods
+        ? ActionType.stock
+        : ActionType.note;
+    final action = TallyAction(
+      type: type,
+      direction: moneyDirection,
+      amount: hasMoney ? amount : 0,
+      item: hasGoods ? item.trim() : null,
+      qty: hasGoods ? handlingQty : null,
+      unit: hasGoods ? handlingUom : null,
+      note: note.trim().isEmpty ? null : note.trim(),
+      who: (who == null || who.trim().isEmpty) ? null : who.trim(),
+      tags: tags,
+      needsDoing: needsDoing,
+      productKey: productKey,
+      baseQty: hasGoods ? baseQty : null,
+      baseUnit: hasGoods ? baseUom : null,
+      moneyMethod: hasMoney ? moneyMethod : null,
+      voicePath: voicePath,
+      imagePaths: imagePaths,
+      mediaAssets: _buildMediaAssets(voicePath, imagePaths),
+      createdAt: DateTime.now(),
+    );
+    final id = await _repo.insert(action);
+    action.id = id;
+    _actions.insert(0, action);
+    _lastRecorded = action;
+    _lastRecordedNonce++;
+    notifyListeners();
+    if (isConnected) unawaited(syncPending());
+    return action;
   }
 
   Future<TallyAction> record({
@@ -291,7 +403,40 @@ class TallyStore extends ChangeNotifier {
       _syncing = false;
       notifyListeners();
     }
+    unawaited(refreshFollowUps());
     return count;
+  }
+
+  /// Asks the host which notes have been seen to, so one that was waiting can
+  /// stop waiting. Quiet about failure: it is news, not the record itself.
+  Future<void> refreshFollowUps() async {
+    final connection = _connection;
+    if (connection == null || !connection.isConnected) return;
+    final waiting = _actions.where((action) => action.isWaiting && action.id != null).toList();
+    if (waiting.isEmpty) return;
+    try {
+      final rows = await _syncService.listFollowUps(connection);
+      if (rows.isEmpty) return;
+      final byId = <String, Map<String, String?>>{
+        for (final row in rows) row['clientRecordId']!: row,
+      };
+      var changed = false;
+      for (final action in waiting) {
+        final row = byId['${connection.deviceId}-${action.id}'];
+        if (row == null) continue;
+        final resolvedAt = DateTime.tryParse(row['resolvedAt'] ?? '')?.toLocal();
+        if (resolvedAt == null) continue;
+        await _repo.markResolved(action.id!, resolvedAt, row['resolvedBy']);
+        final index = _actions.indexWhere((candidate) => candidate.id == action.id);
+        if (index >= 0) _actions[index] = _actions[index].seenAtShop(resolvedAt, row['resolvedBy']);
+        changed = true;
+      }
+      if (changed) notifyListeners();
+    } on SyncFailure {
+      // Offline, or an older host: the note simply keeps waiting.
+    } on MonitorAccessRevoked {
+      // Not related to notes; nothing to do here.
+    }
   }
 
   Future<bool> syncOne(TallyAction action) async {
@@ -352,6 +497,50 @@ class TallyStore extends ChangeNotifier {
     }
     return nodes;
   }
+
+  /// Every item this phone knows from the shops it is connected to, for naming
+  /// goods on a note. Read from what is already downloaded so it works offline.
+  Future<List<CatalogItem>> loadCatalogItems() async {
+    final nodes = await _billingRepository.nodes();
+    final items = <CatalogItem>[];
+    final seen = <String>{};
+    for (final node in nodes) {
+      for (final item in await _billingRepository.catalog(node.id)) {
+        if (seen.add('${node.id}|${item.sourceProductKey}')) items.add(item);
+      }
+    }
+    items.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return items;
+  }
+
+  /// Names already used on notes, newest first, so the same person is written
+  /// the same way next time.
+  List<String> get rememberedWho {
+    final names = <String>[];
+    for (final action in _actions) {
+      final who = action.who?.trim();
+      if (who != null && who.isNotEmpty && !names.contains(who)) names.add(who);
+      if (names.length >= 20) break;
+    }
+    return names;
+  }
+
+  /// Tags already used, most used first.
+  List<String> get rememberedTags {
+    final counts = <String, int>{};
+    for (final action in _actions) {
+      for (final tag in action.tags) {
+        counts[tag] = (counts[tag] ?? 0) + 1;
+      }
+    }
+    final tags = counts.keys.toList()
+      ..sort((a, b) => counts[b]!.compareTo(counts[a]!));
+    return tags.take(24).toList();
+  }
+
+  /// Notes still waiting on somebody at the shop.
+  List<TallyAction> get waitingNotes =>
+      _actions.where((action) => action.isWaiting).toList();
 
   Future<List<CatalogItem>> loadCatalog(
     String nodeId, {

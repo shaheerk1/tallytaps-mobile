@@ -22,6 +22,7 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   ActionType? _filter;
+  bool _waitingOnly = false;
   bool _showBills = false;
   String _query = '';
 
@@ -113,6 +114,24 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 for (final spec in CategorySpec.all)
                   _filterChip(spec.type, spec.label),
                 _billFilterChip(store.mobileBills.length),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: Text(
+                      store.waitingNotes.isEmpty
+                          ? 'To do'
+                          : 'To do (${store.waitingNotes.length})',
+                    ),
+                    selected: _waitingOnly,
+                    onSelected: (value) {
+                      tapHaptic();
+                      setState(() {
+                        _waitingOnly = value;
+                        if (value) _showBills = false;
+                      });
+                    },
+                  ),
+                ),
               ],
             ),
           ),
@@ -139,9 +158,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
   List<TallyAction> _filterList(List<TallyAction> all) {
     return all.where((a) {
       if (_filter != null && a.type != _filter) return false;
+      if (_waitingOnly && !a.isWaiting) return false;
       if (_query.isEmpty) return true;
       return a.title.toLowerCase().contains(_query) ||
-          (a.note?.toLowerCase().contains(_query) ?? false);
+          (a.note?.toLowerCase().contains(_query) ?? false) ||
+          (a.who?.toLowerCase().contains(_query) ?? false) ||
+          (a.item?.toLowerCase().contains(_query) ?? false) ||
+          a.tags.any((tag) => tag.contains(_query));
     }).toList();
   }
 
@@ -391,13 +414,32 @@ class _ActionTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        action.title,
+                        action.note?.trim().isNotEmpty == true
+                            ? action.note!.trim()
+                            : action.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 16,
+                          fontSize: 15.5,
                           fontWeight: FontWeight.w700,
+                          height: 1.3,
                           color: AppColors.ink,
                         ),
                       ),
+                      if (action.marks.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            action.marks,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.inkSoft,
+                            ),
+                          ),
+                        ),
                       const SizedBox(height: 2),
                       Row(
                         children: [
@@ -409,6 +451,14 @@ class _ActionTile extends StatelessWidget {
                               color: AppColors.inkFaint,
                             ),
                           ),
+                          if (action.isWaiting) ...[
+                            const SizedBox(width: 8),
+                            const _Pill(text: 'To do', color: AppColors.stock),
+                          ],
+                          if (action.isDone) ...[
+                            const SizedBox(width: 8),
+                            const _Pill(text: 'Seen at the shop', color: AppColors.positive),
+                          ],
                           if (action.qtyLabel.isNotEmpty) ...[
                             const SizedBox(width: 8),
                             Text(
@@ -1090,6 +1140,29 @@ class _EmptyState extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A short state word on a note: waiting on the shop, or seen to.
+class _Pill extends StatelessWidget {
+  const _Pill({required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: color),
       ),
     );
   }

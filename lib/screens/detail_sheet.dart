@@ -141,6 +141,31 @@ class _DetailSheetState extends State<DetailSheet> {
                   ],
                 ),
               ),
+            if (_action.marks.isNotEmpty || _action.needsDoing) ...[
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (_action.isWaiting)
+                    const Chip(
+                      label: Text('Waiting on the shop'),
+                      backgroundColor: Color(0x1AE8890C),
+                    ),
+                  if (_action.isDone)
+                    Chip(
+                      label: Text(
+                        _action.resolvedBy == null
+                            ? 'Seen at the shop'
+                            : 'Seen at the shop by ${_action.resolvedBy}',
+                      ),
+                      backgroundColor: const Color(0x1A12A150),
+                    ),
+                  if (_action.who != null) Chip(label: Text('About ${_action.who}')),
+                  for (final tag in _action.tags) Chip(label: Text('#$tag')),
+                ],
+              ),
+            ],
             if (_action.note != null && _action.note!.isNotEmpty) ...[
               const SizedBox(height: 16),
               Text(

@@ -199,6 +199,23 @@ class SyncService {
     );
   }
 
+  /// Which of this device's notes somebody at the shop has ticked off.
+  /// Returns the client record id of each, with when and by whom.
+  Future<List<Map<String, String?>>> listFollowUps(SyncConnection connection) async {
+    final body = await _deviceGet(connection, '/api/v1/mobile/records/follow-ups');
+    final records = body['records'];
+    if (records is! List) return const [];
+    return records
+        .whereType<Map>()
+        .map((row) => {
+              'clientRecordId': row['clientRecordId'] as String?,
+              'resolvedAt': row['resolvedAt'] as String?,
+              'resolvedBy': row['resolvedBy'] as String?,
+            })
+        .where((row) => row['clientRecordId'] != null)
+        .toList();
+  }
+
   Future<List<PosCatalogNode>> listPosNodes(SyncConnection connection) async {
     final body = await _deviceGet(connection, '/api/v1/mobile/pos-nodes');
     final nodes = body['nodes'];
@@ -342,6 +359,18 @@ class SyncService {
                   .where((asset) => asset.uploaded)
                   .map((asset) => asset.remoteId)
                   .toList(),
+              // What the person marked on the note travels with it, so the shop
+              // reads the note as it was written.
+              'details': {
+                'who': action.who,
+                'tags': action.tags,
+                'needsDoing': action.needsDoing,
+                'kind': action.hasMoney
+                    ? 'money'
+                    : action.hasGoods
+                    ? 'goods'
+                    : 'note',
+              },
               'deliveryScope': connection.deliveryScope,
               'targetPosNodeIds': connection.deliveryScope == 'selected'
                   ? connection.targetPosNodeIds

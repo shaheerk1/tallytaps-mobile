@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 import 'package:tally/data/action_repository.dart';
-import 'package:tally/screens/home_screen.dart';
+import 'package:tally/screens/app_shell.dart';
 import 'package:tally/monitor/monitor_controller.dart';
 import 'package:tally/monitor/monitor_models.dart';
 import 'package:tally/monitor/monitor_operations.dart';
@@ -96,16 +96,16 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: store,
-        child: MaterialApp(theme: AppTheme.light, home: const HomeScreen()),
+        child: MaterialApp(theme: AppTheme.light, home: const AppShell()),
       ),
     );
     await tester.pump();
 
     expect(store.monitorAccess, isFalse);
     expect(find.text('Business Monitor'), findsNothing);
-    // The recording flow is untouched by the feature.
-    expect(find.text('Cash'), findsOneWidget);
-    expect(find.text('Create a quick bill'), findsOneWidget);
+    // Writing notes is untouched by the feature.
+    expect(find.text('Business'), findsNothing);
+    expect(find.text('Note'), findsOneWidget);
   });
 
   testWidgets('monitor sub-routes retain repository and shared filter providers', (tester) async {

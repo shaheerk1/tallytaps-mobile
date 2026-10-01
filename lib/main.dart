@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'data/action_repository.dart';
-import 'screens/home_screen.dart';
+import 'screens/app_shell.dart';
 import 'state/tally_store.dart';
 import 'theme/app_theme.dart';
 
@@ -27,7 +27,7 @@ class TallyApp extends StatelessWidget {
       title: 'TallyTaps',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      home: const HomeScreen(),
+      home: const AppShell(),
     );
   }
 }

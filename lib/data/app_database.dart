@@ -8,7 +8,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'tally.db';
-  static const _dbVersion = 5;
+  static const _dbVersion = 7;
 
   Database? _db;
 
@@ -50,6 +50,36 @@ class AppDatabase {
     }
     if (oldVersion < 4) await _createBilling(db);
     if (oldVersion < 5) await _createEntryDrafts(db);
+    if (oldVersion < 7) {
+      // Every note kept so far was a finished one; drafts start from here.
+      await db.execute(
+        "ALTER TABLE actions ADD COLUMN status TEXT NOT NULL DEFAULT 'final'",
+      );
+      await db.execute('CREATE INDEX idx_actions_status ON actions (status, created_at DESC)');
+    }
+    if (oldVersion < 6) {
+      for (final statement in const [
+        'ALTER TABLE actions ADD COLUMN who TEXT',
+        'ALTER TABLE actions ADD COLUMN tags TEXT',
+        'ALTER TABLE actions ADD COLUMN needs_doing INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE actions ADD COLUMN resolved_at INTEGER',
+        'ALTER TABLE actions ADD COLUMN resolved_by TEXT',
+        'ALTER TABLE actions ADD COLUMN product_key TEXT',
+        'ALTER TABLE actions ADD COLUMN base_qty REAL',
+        'ALTER TABLE actions ADD COLUMN base_unit TEXT',
+        'ALTER TABLE actions ADD COLUMN money_method TEXT',
+        'ALTER TABLE entry_drafts ADD COLUMN who TEXT',
+        'ALTER TABLE entry_drafts ADD COLUMN tags TEXT',
+        'ALTER TABLE entry_drafts ADD COLUMN needs_doing INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE entry_drafts ADD COLUMN product_key TEXT',
+        'ALTER TABLE entry_drafts ADD COLUMN base_input TEXT',
+        'ALTER TABLE entry_drafts ADD COLUMN base_unit TEXT',
+        'ALTER TABLE entry_drafts ADD COLUMN money_method TEXT',
+        'ALTER TABLE entry_drafts ADD COLUMN money_direction TEXT',
+      ]) {
+        await db.execute(statement);
+      }
+    }
   }
 
   Future<void> _createActions(Database db) async {
@@ -63,6 +93,16 @@ class AppDatabase {
         qty         REAL,
         unit        TEXT,
         note        TEXT,
+        status      TEXT NOT NULL DEFAULT 'final',
+        who         TEXT,
+        tags        TEXT,
+        needs_doing INTEGER NOT NULL DEFAULT 0,
+        resolved_at INTEGER,
+        resolved_by TEXT,
+        product_key TEXT,
+        base_qty    REAL,
+        base_unit   TEXT,
+        money_method TEXT,
         voice_path  TEXT,
         image_paths TEXT,
         media_assets TEXT,
@@ -73,6 +113,9 @@ class AppDatabase {
     ''');
     await db.execute(
       'CREATE INDEX idx_actions_created ON actions (created_at DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_actions_status ON actions (status, created_at DESC)',
     );
   }
 
@@ -103,6 +146,14 @@ class AppDatabase {
         price_input     TEXT,
         stock_price_mode INTEGER NOT NULL DEFAULT 0,
         unit            TEXT,
+        who             TEXT,
+        tags            TEXT,
+        needs_doing     INTEGER NOT NULL DEFAULT 0,
+        product_key     TEXT,
+        base_input      TEXT,
+        base_unit       TEXT,
+        money_method    TEXT,
+        money_direction TEXT,
         voice_path      TEXT,
         image_paths     TEXT,
         updated_at      INTEGER NOT NULL
