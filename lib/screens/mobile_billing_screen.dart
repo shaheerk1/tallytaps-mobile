@@ -16,7 +16,11 @@ class MobileBillingScreen extends StatefulWidget {
 
 class _MobileBillingScreenState extends State<MobileBillingScreen> {
   final _searchController = TextEditingController();
-  final cart = <String, MobileBillLine>{};
+  final _searchFocus = FocusNode();
+
+  /// The bill as written, in the order it was written: the same item may
+  /// appear on as many lines as it was sold on, exactly as on the desktop.
+  final cart = <MobileBillLine>[];
   List<PosCatalogNode> nodes = [];
   List<CatalogItem> items = [];
   String? nodeId;
@@ -34,6 +38,7 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -101,57 +106,63 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
     }).toList();
   }
 
-  double get total => cart.values.fold(0, (sum, line) => sum + line.lineTotal);
+  double get total => cart.fold(0, (sum, line) => sum + line.lineTotal);
 
   double get merchandiseTotal =>
-      cart.values.fold(0, (sum, line) => sum + line.merchandiseTotal);
+      cart.fold(0, (sum, line) => sum + line.merchandiseTotal);
 
-  Future<void> _add(CatalogItem item) async {
-    tapHaptic();
-    final existing = cart[item.sourceProductKey];
-    if (item.requiresMeasuredQuantity) {
-      await _editItem(
-        item,
-        existing ??
-            MobileBillLine(
-              item: item,
-              quantity: item.allowZeroQuantity ? 0 : item.quantityStep,
-            ),
-        isNew: existing == null,
-      );
+  /// Every line this item is on, in the order they were added.
+  List<MobileBillLine> _linesFor(CatalogItem item) => cart
+      .where((line) => line.item.sourceProductKey == item.sourceProductKey)
+      .toList();
+
+  /// Tapping the item itself means one more of it: a plain item piles onto the
+  /// line it is already on, the way a counter counts. An item that is weighed
+  /// cannot be counted up without saying the weight, so it starts a line.
+  Future<void> _tapItem(CatalogItem item) async {
+    final existing = _linesFor(item);
+    if (!item.requiresMeasuredQuantity && existing.isNotEmpty) {
+      _bump(existing.last);
       return;
     }
-    setState(() {
-      if (existing == null) {
-        cart[item.sourceProductKey] = MobileBillLine(
-          item: item,
-          quantity: item.quantityStep,
-        );
-      } else {
-        existing.quantity += item.quantityStep;
-      }
-    });
+    await _startLine(item);
   }
 
-  Future<void> _editItem(
-    CatalogItem item,
-    MobileBillLine line, {
-    bool isNew = false,
-  }) async {
+  /// A line of its own for this item, however many it already has.
+  Future<void> _startLine(CatalogItem item) async {
+    tapHaptic();
+    final line = MobileBillLine(
+      item: item,
+      quantity: item.allowZeroQuantity ? 0 : item.quantityStep,
+    );
+    if (item.requiresMeasuredQuantity) {
+      await _editItem(line, isNew: true);
+      return;
+    }
+    setState(() => cart.add(line));
+  }
+
+  void _bump(MobileBillLine line) {
+    tapHaptic();
+    setState(() => line.quantity += line.item.quantityStep);
+  }
+
+  Future<void> _editItem(MobileBillLine line, {bool isNew = false}) async {
     final result = await showModalBottomSheet<_LineEditResult>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _LineEditorSheet(item: item, line: line),
+      builder: (_) => _LineEditorSheet(item: line.item, line: line),
     );
+    // A new line only joins the bill once it has been filled in and kept.
     if (!mounted || result == null) return;
     setState(() {
       line.quantity = result.quantity;
       line.kilos = result.measuredQuantity;
       line.unitPriceOverride = result.unitPrice;
       line.priceOverrideReason = result.priceOverrideReason;
-      cart[item.sourceProductKey] = line;
+      if (isNew) cart.add(line);
     });
     if (isNew) successHaptic();
   }
@@ -159,13 +170,13 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
   void _decrease(MobileBillLine line) {
     tapHaptic();
     if (line.item.requiresMeasuredQuantity) {
-      _editItem(line.item, line);
+      setState(() => cart.remove(line));
       return;
     }
     setState(() {
       final next = line.quantity - line.item.quantityStep;
       if (next <= 0) {
-        cart.remove(line.item.sourceProductKey);
+        cart.remove(line);
       } else {
         line.quantity = next;
       }
@@ -327,7 +338,9 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
           const SizedBox(height: 11),
           TextField(
             controller: _searchController,
+            focusNode: _searchFocus,
             onChanged: (value) => setState(() => search = value),
+            onSubmitted: (_) => _submitSearch(),
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
               hintText: 'Search item, code or barcode',
@@ -368,6 +381,33 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
     );
   }
 
+  /// Enter on the search box takes the item it can only mean: a code typed or
+  /// scanned in full, or the one item left after narrowing. A barcode scanner
+  /// ends its read with Enter, and on a counter that should bill the item.
+  void _submitSearch() {
+    final query = search.trim().toLowerCase();
+    if (query.isEmpty) return;
+    final shown = visible;
+    final exact = shown
+        .where(
+          (item) =>
+              item.barcode?.trim().toLowerCase() == query ||
+              item.sku?.trim().toLowerCase() == query,
+        )
+        .toList();
+    final chosen = exact.length == 1
+        ? exact.first
+        : shown.length == 1
+        ? shown.first
+        : null;
+    if (chosen == null) return;
+    _searchController.clear();
+    setState(() => search = '');
+    _tapItem(chosen);
+    // Ready for the next scan, unless a sheet is about to take the screen.
+    if (!chosen.requiresMeasuredQuantity) _searchFocus.requestFocus();
+  }
+
   Widget _categoryChip(String? value, String label) => Padding(
     padding: const EdgeInsets.only(right: 7),
     child: FilterChip(
@@ -386,15 +426,15 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
   );
 
   Widget _productCard(CatalogItem item) {
-    final line = cart[item.sourceProductKey];
-    final selected = line != null;
+    final lines = _linesFor(item);
+    final selected = lines.isNotEmpty;
     return Material(
       key: ValueKey('billing-item-${item.sourceProductKey}'),
       color: Colors.white,
       borderRadius: BorderRadius.circular(19),
       elevation: selected ? 1 : 0,
       child: InkWell(
-        onTap: () => _add(item),
+        onTap: () => _tapItem(item),
         borderRadius: BorderRadius.circular(19),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(13, 12, 10, 11),
@@ -473,62 +513,89 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
                   padding: EdgeInsets.symmetric(vertical: 9),
                   child: Divider(height: 1),
                 ),
-                Row(
-                  children: [
-                    IconButton.filledTonal(
+                for (var index = 0; index < lines.length; index++)
+                  _cartLineRow(
+                    lines[index],
+                    lines.length == 1 ? null : index + 1,
+                  ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: ValueKey('billing-again-${item.sourceProductKey}'),
+                    onPressed: () => _startLine(item),
+                    icon: const Icon(Icons.playlist_add_rounded, size: 19),
+                    label: const Text('Add another line'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.brand,
                       visualDensity: VisualDensity.compact,
-                      onPressed: () => _decrease(line),
-                      icon: const Icon(Icons.remove_rounded),
-                    ),
-                    Expanded(
-                      child: InkWell(
-                        onTap: () => _editItem(item, line),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: Column(
-                            children: [
-                              Text(
-                                _lineMeasures(line),
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: AppColors.brandDark,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              Text(
-                                '${Money.format(line.lineTotal)} · tap to edit',
-                                style: const TextStyle(
-                                  color: AppColors.inkSoft,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      textStyle: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    IconButton.filled(
-                      visualDensity: VisualDensity.compact,
-                      style: IconButton.styleFrom(
-                        backgroundColor: AppColors.brand,
-                      ),
-                      onPressed: item.requiresMeasuredQuantity
-                          ? () => _editItem(item, line)
-                          : () => _add(item),
-                      icon: Icon(
-                        item.requiresMeasuredQuantity
-                            ? Icons.edit_rounded
-                            : Icons.add_rounded,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ],
           ),
         ),
       ),
+    );
+  }
+
+  /// One line of this item on the bill. The number only shows when the item
+  /// is on the bill more than once, so a repeat reads as meant.
+  Widget _cartLineRow(MobileBillLine line, int? number) {
+    final measured = line.item.requiresMeasuredQuantity;
+    return Row(
+      key: ValueKey('cart-line-${line.lineId}'),
+      children: [
+        IconButton.filledTonal(
+          visualDensity: VisualDensity.compact,
+          tooltip: measured ? 'Take this line off' : 'One less',
+          onPressed: () => _decrease(line),
+          icon: Icon(
+            measured ? Icons.delete_outline_rounded : Icons.remove_rounded,
+          ),
+        ),
+        Expanded(
+          child: InkWell(
+            onTap: () => _editItem(line),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(
+                children: [
+                  Text(
+                    number == null
+                        ? _lineMeasures(line)
+                        : '$number · ${_lineMeasures(line)}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppColors.brandDark,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    '${Money.format(line.lineTotal)} · tap to edit',
+                    style: const TextStyle(
+                      color: AppColors.inkSoft,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        IconButton.filled(
+          visualDensity: VisualDensity.compact,
+          style: IconButton.styleFrom(backgroundColor: AppColors.brand),
+          tooltip: measured ? 'Change this line' : 'One more',
+          onPressed: measured ? () => _editItem(line) : () => _bump(line),
+          icon: Icon(measured ? Icons.edit_rounded : Icons.add_rounded),
+        ),
+      ],
     );
   }
 
@@ -611,7 +678,7 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
   );
 
   Future<void> _review() async {
-    if (cart.values.any((line) => !line.isValid)) {
+    if (cart.any((line) => !line.isValid)) {
       setState(() => error = 'Complete the quantities required by each item.');
       return;
     }
@@ -620,7 +687,7 @@ class _MobileBillingScreenState extends State<MobileBillingScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => _BillReviewScreen(
-          lines: cart.values.toList(),
+          lines: List.of(cart),
           nodes: nodes,
           catalog: selected,
         ),
@@ -726,7 +793,8 @@ class _BillReviewScreenState extends State<_BillReviewScreen> {
         const SizedBox(height: 12),
         _sectionTitle('ITEMS', '${widget.lines.length}'),
         const SizedBox(height: 7),
-        for (final line in widget.lines) _line(line),
+        for (var index = 0; index < widget.lines.length; index++)
+          _line(widget.lines[index], index),
         const SizedBox(height: 8),
         _paymentCard(),
         const SizedBox(height: 10),
@@ -875,13 +943,13 @@ class _BillReviewScreenState extends State<_BillReviewScreen> {
     ],
   );
 
-  Widget _line(MobileBillLine line) => Card(
+  Widget _line(MobileBillLine line, int index) => Card(
     margin: const EdgeInsets.only(bottom: 8),
     elevation: 0,
     color: Colors.white,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     child: InkWell(
-      key: ValueKey('review-line-${line.item.sourceProductKey}'),
+      key: ValueKey('review-line-$index'),
       onTap: () => _editLine(line),
       borderRadius: BorderRadius.circular(18),
       child: Padding(
@@ -899,6 +967,15 @@ class _BillReviewScreenState extends State<_BillReviewScreen> {
                       fontWeight: FontWeight.w800,
                     ),
                   ),
+                  if (_repeatLabel(line) != null)
+                    Text(
+                      _repeatLabel(line)!,
+                      style: const TextStyle(
+                        color: AppColors.brand,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   const SizedBox(height: 3),
                   Text(
                     _reviewMeasure(line),
@@ -951,6 +1028,18 @@ class _BillReviewScreenState extends State<_BillReviewScreen> {
       ),
     ),
   );
+
+  /// "Line 2 of 3" where the same item was billed more than once, so a repeat
+  /// looks deliberate instead of looking like it was entered twice by mistake.
+  String? _repeatLabel(MobileBillLine line) {
+    final same = widget.lines
+        .where(
+          (other) => other.item.sourceProductKey == line.item.sourceProductKey,
+        )
+        .toList();
+    if (same.length < 2) return null;
+    return 'Line ${same.indexOf(line) + 1} of ${same.length}';
+  }
 
   String _reviewMeasure(MobileBillLine line) {
     final measures = <String>[
@@ -1033,12 +1122,14 @@ class _BillReviewScreenState extends State<_BillReviewScreen> {
       children: [
         TextField(
           controller: customer,
+          textInputAction: TextInputAction.next,
           decoration: const InputDecoration(labelText: 'Customer name'),
         ),
         const SizedBox(height: 9),
         TextField(
           controller: mobile,
           keyboardType: TextInputType.phone,
+          textInputAction: TextInputAction.next,
           decoration: const InputDecoration(labelText: 'Mobile number'),
         ),
         const SizedBox(height: 9),
@@ -1170,7 +1261,33 @@ class _LineEditorSheetState extends State<_LineEditorSheet> {
   late final TextEditingController measured;
   late final TextEditingController price;
   late final TextEditingController reason;
+  final quantityFocus = FocusNode();
+  final measuredFocus = FocusNode();
+  final priceFocus = FocusNode();
+  final reasonFocus = FocusNode();
   String? validationMessage;
+
+  /// The order Enter walks: what was weighed, then what was counted, then the
+  /// price, then the reason if the item asks for one. Enter on the last field
+  /// keeps the line, so a whole item can be entered without the screen.
+  List<FocusNode> get _flow => [
+    if (widget.item.requiresMeasuredQuantity) measuredFocus,
+    quantityFocus,
+    if (widget.item.priceOverrideAllowed) priceFocus,
+    if (hasOverride && widget.item.priceOverrideReasonRequired) reasonFocus,
+  ];
+
+  bool _isLast(FocusNode node) => _flow.isNotEmpty && _flow.last == node;
+
+  void _advance(FocusNode from) {
+    final flow = _flow;
+    final at = flow.indexOf(from);
+    if (at >= 0 && at + 1 < flow.length) {
+      flow[at + 1].requestFocus();
+      return;
+    }
+    _save();
+  }
 
   @override
   void initState() {
@@ -1189,6 +1306,10 @@ class _LineEditorSheetState extends State<_LineEditorSheet> {
     measured.dispose();
     price.dispose();
     reason.dispose();
+    quantityFocus.dispose();
+    measuredFocus.dispose();
+    priceFocus.dispose();
+    reasonFocus.dispose();
     super.dispose();
   }
 
@@ -1254,27 +1375,29 @@ class _LineEditorSheetState extends State<_LineEditorSheet> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: _numberField(
-                    key: const ValueKey('line-handling-quantity'),
-                    controller: quantity,
-                    label: 'Unit Count',
-                    suffix: widget.item.handlingUom,
-                    autofocus: !widget.item.requiresMeasuredQuantity,
-                  ),
-                ),
                 if (widget.item.requiresMeasuredQuantity) ...[
-                  const SizedBox(width: 10),
                   Expanded(
                     child: _numberField(
                       key: const ValueKey('line-measured-quantity'),
                       controller: measured,
+                      focusNode: measuredFocus,
                       label: 'Measured Qty',
                       suffix: widget.item.baseUom ?? 'measured',
                       autofocus: true,
                     ),
                   ),
+                  const SizedBox(width: 10),
                 ],
+                Expanded(
+                  child: _numberField(
+                    key: const ValueKey('line-handling-quantity'),
+                    controller: quantity,
+                    focusNode: quantityFocus,
+                    label: 'Unit Count',
+                    suffix: widget.item.handlingUom,
+                    autofocus: !widget.item.requiresMeasuredQuantity,
+                  ),
+                ),
               ],
             ),
             if (widget.item.allowZeroQuantity)
@@ -1290,6 +1413,7 @@ class _LineEditorSheetState extends State<_LineEditorSheet> {
               _numberField(
                 key: const ValueKey('line-selling-price'),
                 controller: price,
+                focusNode: priceFocus,
                 label: 'Selling price per ${widget.item.priceUom}',
                 prefix: Money.symbol,
                 helper: _priceHelper(widget.item),
@@ -1305,6 +1429,9 @@ class _LineEditorSheetState extends State<_LineEditorSheet> {
               TextField(
                 key: const ValueKey('line-price-reason'),
                 controller: reason,
+                focusNode: reasonFocus,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _save(),
                 onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
                   labelText: 'Reason for price change',
@@ -1378,6 +1505,7 @@ class _LineEditorSheetState extends State<_LineEditorSheet> {
   Widget _numberField({
     required Key key,
     required TextEditingController controller,
+    required FocusNode focusNode,
     required String label,
     String? suffix,
     String? prefix,
@@ -1386,8 +1514,13 @@ class _LineEditorSheetState extends State<_LineEditorSheet> {
   }) => TextField(
     key: key,
     controller: controller,
+    focusNode: focusNode,
     autofocus: autofocus,
     keyboardType: const TextInputType.numberWithOptions(decimal: true),
+    textInputAction: _isLast(focusNode)
+        ? TextInputAction.done
+        : TextInputAction.next,
+    onSubmitted: (_) => _advance(focusNode),
     onChanged: (_) => setState(() {
       validationMessage = null;
     }),

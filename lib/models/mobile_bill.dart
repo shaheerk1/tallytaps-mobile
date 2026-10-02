@@ -119,7 +119,12 @@ class MobileBillLine {
     this.kilos,
     this.unitPriceOverride,
     this.priceOverrideReason,
-  });
+    String? lineId,
+  }) : lineId = lineId ?? 'line-${++_lineSequence}';
+
+  /// Tells one line from another when the same item is billed more than once:
+  /// two weighings of the same rice are two lines, not one with a bigger number.
+  final String lineId;
   final CatalogItem item;
   double quantity;
   double? kilos;
@@ -190,8 +195,7 @@ class MobileBillLine {
     );
     return MobileBillLine(
       item: item,
-      quantity:
-          _asDouble(map['handlingQuantity'] ?? map['quantity']) ?? 0,
+      quantity: _asDouble(map['handlingQuantity'] ?? map['quantity']) ?? 0,
       kilos: _asDouble(map['measuredQuantity'] ?? map['kilos']),
       unitPriceOverride:
           _asBool(map['priceOverrideApplied']) || chargedPrice != catalogPrice
@@ -326,6 +330,8 @@ class MobileBill {
     );
   }
 }
+
+int _lineSequence = 0;
 
 double _money(double value) => (value * 100).round() / 100;
 
