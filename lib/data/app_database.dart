@@ -8,7 +8,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const _dbName = 'tally.db';
-  static const _dbVersion = 7;
+  static const _dbVersion = 8;
 
   Database? _db;
 
@@ -32,6 +32,7 @@ class AppDatabase {
     await _createItems(db);
     await _createBilling(db);
     await _createEntryDrafts(db);
+    await _createSupplyChecks(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -57,6 +58,7 @@ class AppDatabase {
       );
       await db.execute('CREATE INDEX idx_actions_status ON actions (status, created_at DESC)');
     }
+    if (oldVersion < 8) await _createSupplyChecks(db);
     if (oldVersion < 6) {
       for (final statement in const [
         'ALTER TABLE actions ADD COLUMN who TEXT',
@@ -80,6 +82,46 @@ class AppDatabase {
         await db.execute(statement);
       }
     }
+  }
+
+  /// Supply checks: a summary someone worked out on this phone, kept here only.
+  Future<void> _createSupplyChecks(Database db) async {
+    await db.execute('''
+      CREATE TABLE supply_checks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        loc_code TEXT,
+        mac_code TEXT,
+        place_label TEXT,
+        from_date TEXT NOT NULL,
+        to_date TEXT NOT NULL,
+        supplier_codes TEXT NOT NULL DEFAULT '',
+        item_codes TEXT NOT NULL DEFAULT '',
+        commission_percent REAL NOT NULL DEFAULT 0,
+        group_by_date INTEGER NOT NULL DEFAULT 0,
+        line_count INTEGER NOT NULL DEFAULT 0,
+        merchandise REAL NOT NULL DEFAULT 0,
+        commission REAL NOT NULL DEFAULT 0,
+        net_payable REAL NOT NULL DEFAULT 0,
+        lines TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX idx_supply_checks_created ON supply_checks (created_at DESC)',
+    );
+    // Which lines a check used, so a line can say how often it has been counted
+    // already. It never stops a line being used again.
+    await db.execute('''
+      CREATE TABLE supply_check_lines (
+        check_id TEXT NOT NULL,
+        line_id TEXT NOT NULL,
+        PRIMARY KEY (check_id, line_id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX idx_supply_check_lines_line ON supply_check_lines (line_id)',
+    );
   }
 
   Future<void> _createActions(Database db) async {

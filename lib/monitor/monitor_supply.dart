@@ -9,6 +9,7 @@ import 'monitor_controller.dart';
 import 'monitor_supply_models.dart';
 import 'monitor_table.dart';
 import 'monitor_widgets.dart';
+import 'supply_check.dart';
 
 /// Supply work as the shop keeps it: deliveries in, what is still on the floor,
 /// the statements drawn up for each supplier, and what each of them is owed.
@@ -22,49 +23,31 @@ class MonitorSupplyTab extends StatefulWidget {
 class _MonitorSupplyTabState extends State<MonitorSupplyTab> {
   int _view = 0;
 
+  /// Each view in its own colour, so the eye finds the one it left off at.
+  static const _views = [
+    MonitorView(label: 'Deliveries', icon: Icons.local_shipping_outlined, tone: AppColors.stock),
+    MonitorView(label: 'On floor', icon: Icons.layers_outlined, tone: AppColors.stock),
+    MonitorView(label: 'Statements', icon: Icons.description_outlined, tone: AppColors.note),
+    MonitorView(label: 'Owed', icon: Icons.handshake_outlined, tone: AppColors.cash),
+    MonitorView(label: 'Check', icon: Icons.fact_check_outlined, tone: AppColors.card),
+  ];
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-          child: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(
-                value: 0,
-                label: Text('Deliveries'),
-                icon: Icon(Icons.local_shipping_outlined, size: 18),
-              ),
-              ButtonSegment(
-                value: 1,
-                label: Text('On floor'),
-                icon: Icon(Icons.layers_outlined, size: 18),
-              ),
-              ButtonSegment(
-                value: 2,
-                label: Text('Statements'),
-                icon: Icon(Icons.description_outlined, size: 18),
-              ),
-              ButtonSegment(
-                value: 3,
-                label: Text('Owed'),
-                icon: Icon(Icons.handshake_outlined, size: 18),
-              ),
-            ],
-            selected: {_view},
-            showSelectedIcon: false,
-            onSelectionChanged: (value) {
-              tapHaptic();
-              setState(() => _view = value.first);
-            },
-          ),
+        MonitorViewPicker(
+          views: _views,
+          index: _view,
+          onChanged: (value) => setState(() => _view = value),
         ),
         Expanded(
           child: switch (_view) {
             0 => const _DeliveriesView(),
             1 => const _ActiveLotsView(),
             2 => const _StatementsView(),
-            _ => const _SupplierAccountsView(),
+            3 => const _SupplierAccountsView(),
+            _ => const SupplyCheckView(),
           },
         ),
       ],
@@ -91,7 +74,7 @@ class _DeliveriesViewState extends State<_DeliveriesView> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 28),
       children: [
-        _FilterChips(
+        MonitorFilterChips(
           value: _status,
           options: const {'': 'All', 'posted': 'Posted', 'draft': 'Being written'},
           onChanged: (value) => setState(() => _status = value),
@@ -286,39 +269,21 @@ class _ActiveLotsViewState extends State<_ActiveLotsView> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-          child: TextField(
+          child: MonitorSearchField(
             controller: _search,
+            hintText: 'Search item, lot code or supplier',
             onChanged: _onSearchChanged,
-            decoration: InputDecoration(
-              hintText: 'Search item, lot code or supplier',
-              prefixIcon: const Icon(Icons.search_rounded),
-              filled: true,
-              fillColor: AppColors.surface,
-              contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: AppColors.line),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: AppColors.line),
-              ),
-            ),
           ),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 0, 14, 4),
-          child: Row(
-            children: [
-              FilterChip(
-                label: const Text('Include emptied lots'),
-                selected: _includeEmpty,
-                onSelected: (value) {
-                  tapHaptic();
-                  setState(() => _includeEmpty = value);
-                },
-              ),
-            ],
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: MonitorFilterChips(
+              value: _includeEmpty ? 'all' : 'holding',
+              options: const {'holding': 'Still holding', 'all': 'Include emptied'},
+              onChanged: (value) => setState(() => _includeEmpty = value == 'all'),
+            ),
           ),
         ),
         Expanded(
@@ -438,7 +403,7 @@ class _StatementsViewState extends State<_StatementsView> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 28),
       children: [
-        _FilterChips(
+        MonitorFilterChips(
           value: _status,
           options: const {
             '': 'All',
@@ -836,33 +801,3 @@ class MonitorSupplierAccountScreen extends StatelessWidget {
 }
 
 // ── Shared ────────────────────────────────────────────────────
-
-class _FilterChips extends StatelessWidget {
-  const _FilterChips({
-    required this.value,
-    required this.options,
-    required this.onChanged,
-  });
-
-  final String value;
-  final Map<String, String> options;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      children: [
-        for (final entry in options.entries)
-          ChoiceChip(
-            label: Text(entry.value),
-            selected: value == entry.key,
-            onSelected: (_) {
-              tapHaptic();
-              onChanged(entry.key);
-            },
-          ),
-      ],
-    );
-  }
-}

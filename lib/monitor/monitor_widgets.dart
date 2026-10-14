@@ -94,7 +94,13 @@ class _MonitorAsyncState<T> extends State<MonitorAsync<T>> {
           }
           return _MonitorError(
             message: '${snapshot.error}',
-            onRetry: () => setState(() => _future = widget.load()),
+            // A block body, deliberately: an arrow would hand setState the
+            // Future the assignment evaluates to, which it refuses.
+            onRetry: () {
+              setState(() {
+                _future = widget.load();
+              });
+            },
           );
         }
         return widget.builder(context, snapshot.data as T);
@@ -648,3 +654,235 @@ class MonitorRow extends StatelessWidget {
 
 /// Thin separator used between rows inside a card.
 const monitorDivider = Divider(height: 18, color: AppColors.line);
+
+/// The supply code a line was billed under.
+///
+/// It is what ties a sale back to the goods it came from, so it reads the same
+/// wherever a line is shown: on a bill, on a return, and in a supply check.
+class SupplyCodeChip extends StatelessWidget {
+  const SupplyCodeChip({super.key, required this.code});
+
+  final String code;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(left: 6, right: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: AppColors.stockSoft,
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(
+      code,
+      style: const TextStyle(
+        color: AppColors.stock,
+        fontSize: 10.5,
+        fontWeight: FontWeight.w900,
+      ),
+    ),
+  );
+}
+
+/// One of the places a section can stand in.
+class MonitorView {
+  const MonitorView({required this.label, required this.icon, required this.tone});
+
+  final String label;
+  final IconData icon;
+
+  /// Its own colour, which only shows when you are standing in it.
+  final Color tone;
+}
+
+/// Picking between the views of a section.
+///
+/// A segmented button squeezes five labels into a phone's width until none of
+/// them can be read. These are pills that wrap onto a second line instead, so
+/// a view keeps its name however many there are, and the one you are standing
+/// in is lifted out of the strip the way the app's own tabs are.
+class MonitorViewPicker extends StatelessWidget {
+  const MonitorViewPicker({
+    super.key,
+    required this.views,
+    required this.index,
+    required this.onChanged,
+  });
+
+  final List<MonitorView> views;
+  final int index;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+    padding: const EdgeInsets.all(4),
+    decoration: BoxDecoration(
+      color: AppColors.line.withValues(alpha: .45),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: Wrap(
+      spacing: 4,
+      runSpacing: 4,
+      children: [
+        for (var position = 0; position < views.length; position += 1)
+          _ViewPill(
+            view: views[position],
+            selected: position == index,
+            onTap: () {
+              tapHaptic();
+              onChanged(position);
+            },
+          ),
+      ],
+    ),
+  );
+}
+
+class _ViewPill extends StatelessWidget {
+  const _ViewPill({required this.view, required this.selected, required this.onTap});
+
+  final MonitorView view;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(14),
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 140),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: selected ? AppColors.surface : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: selected
+            ? const [BoxShadow(color: Color(0x1A101828), blurRadius: 10, offset: Offset(0, 3))]
+            : const [],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(view.icon, size: 17, color: selected ? view.tone : AppColors.inkFaint),
+          const SizedBox(width: 6),
+          Text(
+            view.label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: selected ? AppColors.ink : AppColors.inkFaint,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// The one search box the monitor uses, so every section is searched the same way.
+class MonitorSearchField extends StatelessWidget {
+  const MonitorSearchField({
+    super.key,
+    required this.controller,
+    required this.hintText,
+    required this.onChanged,
+    this.onClear,
+    this.textCapitalization = TextCapitalization.none,
+    this.helperText,
+  });
+
+  final TextEditingController controller;
+  final String hintText;
+  final ValueChanged<String> onChanged;
+  final VoidCallback? onClear;
+  final TextCapitalization textCapitalization;
+  final String? helperText;
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    controller: controller,
+    onChanged: onChanged,
+    textCapitalization: textCapitalization,
+    textInputAction: TextInputAction.search,
+    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    decoration: InputDecoration(
+      hintText: hintText,
+      helperText: helperText,
+      isDense: true,
+      prefixIcon: const Icon(Icons.search_rounded, size: 20),
+      prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+      suffixIcon: controller.text.isEmpty
+          ? null
+          : IconButton(
+              iconSize: 18,
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Clear',
+              onPressed: () {
+                controller.clear();
+                onChanged('');
+                onClear?.call();
+              },
+              icon: const Icon(Icons.close_rounded),
+            ),
+      filled: true,
+      fillColor: AppColors.surface,
+      contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppColors.line),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppColors.line),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppColors.brand, width: 1.4),
+      ),
+    ),
+  );
+}
+
+/// Narrowing a list to one of a few states: all, or one of them.
+class MonitorFilterChips extends StatelessWidget {
+  const MonitorFilterChips({
+    super.key,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String value;
+  final Map<String, String> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 7,
+    runSpacing: 6,
+    children: [
+      for (final entry in options.entries)
+        ChoiceChip(
+          label: Text(entry.value),
+          selected: value == entry.key,
+          showCheckmark: false,
+          side: BorderSide(
+            color: value == entry.key ? AppColors.brand : AppColors.line,
+          ),
+          backgroundColor: AppColors.surface,
+          selectedColor: AppColors.brand.withValues(alpha: .1),
+          labelStyle: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w800,
+            color: value == entry.key ? AppColors.brandDark : AppColors.inkSoft,
+          ),
+          visualDensity: VisualDensity.compact,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          onSelected: (_) {
+            tapHaptic();
+            onChanged(entry.key);
+          },
+        ),
+    ],
+  );
+}

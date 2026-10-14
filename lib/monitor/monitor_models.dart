@@ -8,6 +8,14 @@ library;
 double _money(Object? value) => (value as num?)?.toDouble() ?? 0;
 double? _optional(Object? value) => (value as num?)?.toDouble();
 int _count(Object? value) => (value as num?)?.toInt() ?? 0;
+
+/// A supply code, or nothing where the line was billed without one. Blanks and
+/// the literal 'null' a payload can carry both read as nothing.
+String? _supplyCode(Object? value) {
+  final code = '${value ?? ''}'.trim();
+  return code.isEmpty || code == 'null' ? null : code;
+}
+
 String _string(Object? value, [String fallback = '']) =>
     value is String && value.isNotEmpty ? value : fallback;
 
@@ -485,6 +493,7 @@ class MonitorInvoiceLine {
   const MonitorInvoiceLine({
     required this.description,
     required this.itemCode,
+    required this.supplierCode,
     required this.handlingQty,
     required this.handlingUom,
     required this.baseQty,
@@ -499,6 +508,10 @@ class MonitorInvoiceLine {
 
   final String description;
   final String itemCode;
+
+  /// The supply code the counter typed on this line, which is how a supply is
+  /// settled later. Null on a line billed without one.
+  final String? supplierCode;
   final double handlingQty;
   final String handlingUom;
   final double? baseQty;
@@ -514,6 +527,7 @@ class MonitorInvoiceLine {
       MonitorInvoiceLine(
         description: _string(map['description'], 'Item'),
         itemCode: _string(map['itemCode']),
+        supplierCode: _supplyCode(map['supplierCode']),
         handlingQty: _money(map['handlingQty']),
         handlingUom: _string(map['handlingUom'], 'qty'),
         baseQty: _optional(map['baseQty']),
@@ -554,6 +568,7 @@ class MonitorRefundLine {
   const MonitorRefundLine({
     required this.description,
     required this.itemCode,
+    required this.supplierCode,
     required this.handlingQty,
     required this.handlingUom,
     required this.baseQty,
@@ -566,6 +581,10 @@ class MonitorRefundLine {
 
   final String description;
   final String itemCode;
+
+  /// The supply the returned goods went out on, so a return can be set against
+  /// the same supply as the sale.
+  final String? supplierCode;
   final double handlingQty;
   final String handlingUom;
   final double? baseQty;
@@ -578,6 +597,7 @@ class MonitorRefundLine {
   factory MonitorRefundLine.fromMap(Map<String, dynamic> map) => MonitorRefundLine(
         description: _string(map['description'], 'Item'),
         itemCode: _string(map['itemCode']),
+        supplierCode: _supplyCode(map['supplierCode']),
         handlingQty: _money(map['handlingQty']),
         handlingUom: _string(map['handlingUom'], 'qty'),
         baseQty: _optional(map['baseQty']),

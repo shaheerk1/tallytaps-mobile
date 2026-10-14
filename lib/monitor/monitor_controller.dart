@@ -5,6 +5,7 @@ import '../services/sync_service.dart';
 import '../state/tally_store.dart';
 import 'monitor_models.dart';
 import 'monitor_supply_models.dart';
+import 'supply_check_models.dart';
 
 /// The period and the place every monitor screen reads through.
 ///
@@ -309,6 +310,32 @@ class MonitorRepository {
     String supplierId,
   ) async => MonitorAccountSheet.fromMap(
     await _get('/supplier-accounts/$supplierId', query: _node(scope)),
+  );
+
+  /// Every sale line in the range, for checking a supply.
+  ///
+  /// [supplierCodes] are the codes the counter typed on the lines, several at
+  /// once because a day's goods go out under more than one and one of them is
+  /// usually mistyped. [itemCodes] narrow the same list without narrowing the
+  /// item codes offered back, which are always those of the whole range.
+  Future<SaleLinePage> saleLines(
+    MonitorScope scope, {
+    List<String> itemCodes = const [],
+    List<String> supplierCodes = const [],
+    String query = '',
+    int limit = 400,
+    int offset = 0,
+  }) async => SaleLinePage.fromMap(
+    await _get(
+      '/sale-lines',
+      query: _scoped(scope, {
+        if (itemCodes.isNotEmpty) 'itemCodes': itemCodes.join(','),
+        if (supplierCodes.isNotEmpty) 'supplierCodes': supplierCodes.join(','),
+        if (query.trim().isNotEmpty) 'q': query.trim(),
+        'limit': '$limit',
+        if (offset > 0) 'offset': '$offset',
+      }),
+    ),
   );
 
   /// The individual movements behind one summarised reason on the cash page.

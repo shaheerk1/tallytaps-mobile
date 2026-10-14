@@ -153,4 +153,29 @@ void main() {
     expect(overview.collected, 4100.0);
     expect(overview.cashReturned, 500.0);
   });
+
+  test('a bill line carries the supply code it was billed under', () {
+    final detail = MonitorInvoiceDetail.fromMap(const {
+      'invoice': {'id': '1', 'invoiceNumber': 'INV-1', 'receiptNo': 7, 'grandTotal': 5000.0},
+      'lines': [
+        {'description': 'Rice', 'itemCode': 'RCE', 'supplierCode': 'PER', 'handlingQty': 2.0, 'total': 5000.0},
+        // A line billed without a code says nothing rather than showing a blank chip.
+        {'description': 'Salt', 'itemCode': 'SLT', 'supplierCode': '', 'handlingQty': 1.0, 'total': 200.0},
+        {'description': 'Dhal', 'itemCode': 'DHL', 'handlingQty': 1.0, 'total': 300.0},
+      ],
+      'payments': [],
+      'refunds': [
+        {
+          'refundNumber': 'REF-1', 'txnDate': '2026-11-01', 'grandTotal': 500.0,
+          'lines': [
+            {'description': 'Rice', 'itemCode': 'RCE', 'supplierCode': 'PER', 'handlingQty': 1.0, 'total': 500.0},
+          ],
+        },
+      ],
+    });
+
+    expect(detail.lines.map((line) => line.supplierCode), ['PER', null, null]);
+    // A return belongs to the same supply as the sale it came from.
+    expect(detail.refunds.single.lines.single.supplierCode, 'PER');
+  });
 }

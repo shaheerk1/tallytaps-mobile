@@ -474,7 +474,9 @@ class MonitorInvoiceScreen extends StatelessWidget {
                     for (final refund in detail.refunds)
                       for (final line in refund.lines) ...[
                         AmountRow(
-                          label: line.description,
+                          label: line.supplierCode == null
+                              ? line.description
+                              : '${line.description}  ·  ${line.supplierCode}',
                           hint: [
                             measureText(
                               handlingQty: line.handlingQty,
@@ -566,6 +568,7 @@ class _LineRow extends StatelessWidget {
                 ),
               ),
             ),
+            if (line.supplierCode != null) SupplyCodeChip(code: line.supplierCode!),
             Text(
               Money.format(line.total),
               style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800),
